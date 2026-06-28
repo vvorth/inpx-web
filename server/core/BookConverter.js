@@ -19,9 +19,10 @@ const fb2cngOutputExtensions = new Map([
 ]);
 
 function getConvertedExtension(fileType) {
-    const outputExtension = fb2cngOutputExtensions.get(fileType) || fileType.toLowerCase();
+    const normalizedFileType = String(fileType || '').toLowerCase();
+    const outputExtension = fb2cngOutputExtensions.get(normalizedFileType) || normalizedFileType;
     return outputExtension;
-};
+}
 
 function getConvertedFileName(originalFileName, format) {
     const ext = path.extname(originalFileName);

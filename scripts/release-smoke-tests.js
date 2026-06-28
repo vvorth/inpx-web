@@ -64,6 +64,19 @@ function testTitleSearchKeepsIndexedPrefixFallbacks() {
     assert.doesNotMatch(where, /@indexIter/);
 }
 
+function testConvertedBookFileNames() {
+    const bookConverter = require('../server/core/BookConverter');
+
+    assert.strictEqual(bookConverter.getConvertedExtension('epub'), 'epub');
+    assert.strictEqual(bookConverter.getConvertedExtension('epub3'), 'epub');
+    assert.strictEqual(bookConverter.getConvertedExtension('kepub'), 'kepub.epub');
+    assert.strictEqual(bookConverter.getConvertedExtension('KEPUB'), 'kepub.epub');
+    assert.strictEqual(bookConverter.getConvertedExtension('AzW8'), 'azw8');
+    assert.strictEqual(bookConverter.getConvertedFileName('Book.fb2', 'kepub'), 'Book.kepub.epub');
+    assert.strictEqual(bookConverter.getConvertedFileName('Book.fb2', 'KEPUB'), 'Book.kepub.epub');
+    assert.strictEqual(bookConverter.getConvertedFileName('Book.fb2', 'epub3'), 'Book.epub');
+}
+
 function request(server, urlPath) {
     const port = server.address().port;
     return new Promise((resolve, reject) => {
@@ -525,6 +538,7 @@ async function testConfiguredConverterPathsHavePriority() {
 
 const tests = [
     testTitleSearchKeepsIndexedPrefixFallbacks,
+    testConvertedBookFileNames,
     testAdminSettingsRestoreKeepsSecrets,
     testAdminBackupArchiveAndDownload,
     testUserBackupExportsAndRestoresReaderState,
