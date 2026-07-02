@@ -46,7 +46,7 @@ function createHttpServer(app) {
     });
 }
 
-function testTitleSearchKeepsIndexedPrefixFallbacks() {
+async function testTitleSearchKeepsIndexedPrefixFallbacks() {
     const DbSearcher = require('../server/core/DbSearcher');
     const searcher = Object.create(DbSearcher.prototype);
     searcher.db = {esc: JSON.stringify};
@@ -62,6 +62,21 @@ function testTitleSearchKeepsIndexedPrefixFallbacks() {
     assert.match(where, /@dirtyIndexLR\('value', "night"/);
     assert.match(where, /@dirtyIndexLR\('value', "«night"/);
     assert.doesNotMatch(where, /@indexIter/);
+
+    const preparedWhere = `async(__tr) => { const ids = ${where}; return Array.from(ids); }`
+        .replace(/@@/g, 'return await __tr.')
+        .replace(/@/g, 'await __tr.');
+    const whereFunc = new Function(`'use strict'; return ${preparedWhere}`)();
+    const ids = await whereFunc({
+        dirtyIndexLR: async(_field, from) => {
+            if (from === 'night')
+                return [1, 2];
+            if (from === '\u00abnight')
+                return [2, 3];
+            return [];
+        },
+    });
+    assert.deepStrictEqual(ids, [1, 2, 3]);
 }
 
 function testConvertedBookFileNames() {
