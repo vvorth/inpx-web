@@ -83,7 +83,7 @@ class DbSearcher {
         if (candidates.length <= 1)
             return `@dirtyIndexLR('value', ${db.esc(a)}, ${db.esc(a + maxUtf8Char)})`;
 
-        return `(() => {
+        return `await (async () => {
             const result = new Set();
             const append = (ids) => {
                 for (const id of ids)
