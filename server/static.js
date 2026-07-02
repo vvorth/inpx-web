@@ -657,7 +657,14 @@ module.exports = (app, config, webWorker = null) => {
 
                             bookFile += `.${bookConverter.getConvertedExtension(fileType)}`;
                             if (!await fs.pathExists(bookFile))
-                                await bookConverter.convert({inputFile: rawFile, outputFile: bookFile, format: fileType, sourceFileName: downFileName});
+                                await bookConverter.convert({
+                                        inputFile: rawFile,
+                                        outputFile: bookFile,
+                                        format: fileType,
+                                        sourceFileName: downFileName,
+                                        converterPaths: config.converterPaths,
+                                        fb2cngConfigPath: config.fb2cngConfigPath,
+                                    });
                             downFileName = bookConverter.getConvertedFileName(downFileName, fileType);
                         } else {
                             throw new Error(`Unsupported file type: ${fileType}`);

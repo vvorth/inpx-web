@@ -52,6 +52,7 @@ const propsToSave = [
     'lowMemoryMode',
     'fullOptimization',
     'converterPaths',
+    'fb2cngConfigPath',
     'allowRemoteLib',
     'remoteLib',
     'server',

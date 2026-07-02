@@ -164,13 +164,18 @@ async function runCalibre(args, converterPaths = null) {
     await runFirst(calibreCommandCandidates(converterPaths), args, {env: await buildCalibreEnv()});
 }
 
-async function convertWithFb2cng(inputFile, outputFile, format, converterPaths = null) {
+async function convertWithFb2cng(inputFile, outputFile, format, converterPaths = null, fb2cngConfigPath = null) {
     const outputDir = `${outputFile}.fb2cng`;
     const fb2cngFormat = fb2cngFormats.get(format);
+    const fb2cngArgs = ['convert', '--to', fb2cngFormat, '--overwrite', inputFile, outputDir];
+
+    if (fb2cngConfigPath && externalTools.pathExistsSafe(fb2cngConfigPath))
+        fb2cngArgs.push('--config', fb2cngConfigPath);
 
     await fs.remove(outputDir);
     await fs.ensureDir(outputDir);
-    await runFirst(fb2cngCommandCandidates(converterPaths), ['convert', '--to', fb2cngFormat, '--overwrite', inputFile, outputDir]);
+
+    await runFirst(fb2cngCommandCandidates(converterPaths), fb2cngArgs);
 
     const outputExtension = `.${getConvertedExtension(format)}`;
     const firstMatchedFile = (await fs.readdir(outputDir))
@@ -206,9 +211,9 @@ async function convertWithCalibre(inputFile, outputFile, format, converterPaths 
     }
 }
 
-async function convertPrepared(convertInput, outputFile, format, converterPaths = null) {
+async function convertPrepared(convertInput, outputFile, format, converterPaths = null, fb2cngConfigPath = null) {
     if (fb2cngFormats.has(format) && path.extname(convertInput).toLowerCase() === '.fb2') {
-        await convertWithFb2cng(convertInput, outputFile, format, converterPaths);
+        await convertWithFb2cng(convertInput, outputFile, format, converterPaths, fb2cngConfigPath);
         return;
     }
 
@@ -220,7 +225,7 @@ async function convertPrepared(convertInput, outputFile, format, converterPaths 
     await convertWithCalibre(convertInput, outputFile, format, converterPaths);
 }
 
-async function convert({inputFile, outputFile, format, sourceFileName = '', converterPaths = null}) {
+async function convert({inputFile, outputFile, format, sourceFileName = '', converterPaths = null, fb2cngConfigPath = null}) {
     format = String(format || '').toLowerCase();
     const sourceExt = path.extname(sourceFileName || inputFile).toLowerCase();
     if (!canConvertSourceTo(sourceExt, format))
@@ -242,9 +247,9 @@ async function convert({inputFile, outputFile, format, sourceFileName = '', conv
                 await fs.copyFile(inputFile, tempInput);
             convertInput = tempInput;
         }
-
+        
         try {
-            await convertPrepared(convertInput, outputFile, format, converterPaths);
+            await convertPrepared(convertInput, outputFile, format, converterPaths, fb2cngConfigPath);
         } finally {
             if (tempInput)
                 await fs.remove(tempInput);

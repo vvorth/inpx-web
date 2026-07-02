@@ -5307,6 +5307,7 @@ class WebWorker {
                     format: targetFormat,
                     sourceFileName: downFileName,
                     converterPaths: this.config.converterPaths,
+                    fb2cngConfigPath: this.config.fb2cngConfigPath,
                 });
                 cacheChanged = true;
             }
