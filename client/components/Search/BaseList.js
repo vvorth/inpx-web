@@ -220,15 +220,6 @@ export default class BaseList {
         }, 1000);
     }
 
-    downloadHref(href) {
-        const link = document.createElement('a');
-        link.href = href;
-        link.style.display = 'none';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-    }
-
     async getErrorMessage(error) {
         if (error.response && error.response.data) {
             const responseData = error.response.data;
@@ -305,14 +296,9 @@ export default class BaseList {
 
             //action
             if (action == 'download') {
-                if (format) {
-                    const downloadResponse = await axios.get(href, {responseType: 'blob'});
-                    const fileName = this.getDownloadFileName(downloadResponse, book, format);
-                    this.downloadBlob(downloadResponse.data, fileName);
-                } else {
-                    //скачивание
-                    this.downloadHref(href);
-                }
+                const downloadResponse = await axios.get(href, {responseType: 'blob'});
+                const fileName = this.getDownloadFileName(downloadResponse, book, format);
+                this.downloadBlob(downloadResponse.data, fileName);
             } else if (action == 'copyLink') {
                 //копирование ссылки
                 if (await utils.copyTextToClipboard(href))

@@ -17,9 +17,64 @@ WORKDIR /app
 COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm ci --ignore-scripts --no-audit --no-fund
-RUN mkdir -p "/root/.pkg-cache/${PKG_FETCH_VERSION}" \
-    && node -e "const fs=require('fs'); const version=process.env.PKG_FETCH_VERSION; const nodeVersion=process.env.PKG_NODE_VERSION; const url='https://github.com/vercel/pkg-fetch/releases/download/'+version+'/node-'+nodeVersion+'-linux-x64'; const out='/root/.pkg-cache/'+version+'/fetched-'+nodeVersion+'-linux-x64'; fetch(url).then((res)=>{ if(!res.ok) throw new Error('download failed '+res.status+' '+url); return res.arrayBuffer(); }).then((body)=>fs.writeFileSync(out, Buffer.from(body))).catch((err)=>{ console.error(err); process.exit(1); });" \
-    && chmod +x "/root/.pkg-cache/${PKG_FETCH_VERSION}/fetched-${PKG_NODE_VERSION}-linux-x64"
+RUN mkdir -p "/root/.pkg-cache/${PKG_FETCH_VERSION}"
+RUN node <<'NODE'
+const fs = require('fs');
+const https = require('https');
+const {setTimeout: sleep} = require('timers/promises');
+
+const version = process.env.PKG_FETCH_VERSION;
+const nodeVersion = process.env.PKG_NODE_VERSION;
+const url = `https://github.com/vercel/pkg-fetch/releases/download/${version}/node-${nodeVersion}-linux-x64`;
+const out = `/root/.pkg-cache/${version}/fetched-${nodeVersion}-linux-x64`;
+
+function download(targetUrl, redirects = 5) {
+    return new Promise((resolve, reject) => {
+        const req = https.get(targetUrl, {headers: {'User-Agent': 'inpx-web-docker-build'}}, (res) => {
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                res.resume();
+                if (redirects <= 0)
+                    reject(new Error(`too many redirects for ${targetUrl}`));
+                else
+                    resolve(download(new URL(res.headers.location, targetUrl).toString(), redirects - 1));
+                return;
+            }
+
+            if (res.statusCode < 200 || res.statusCode >= 300) {
+                res.resume();
+                reject(new Error(`download failed ${res.statusCode} ${targetUrl}`));
+                return;
+            }
+
+            const chunks = [];
+            res.on('data', chunk => chunks.push(chunk));
+            res.on('end', () => resolve(Buffer.concat(chunks)));
+        });
+
+        req.setTimeout(60000, () => req.destroy(new Error(`download timeout ${targetUrl}`)));
+        req.on('error', reject);
+    });
+}
+
+(async() => {
+    let lastError;
+    for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+            fs.writeFileSync(out, await download(url));
+            return;
+        } catch (err) {
+            lastError = err;
+            console.error(`pkg-fetch download attempt ${attempt} failed: ${err.message}`);
+            await sleep(attempt * 2000);
+        }
+    }
+    throw lastError;
+})().catch((err) => {
+    console.error(err);
+    process.exit(1);
+});
+NODE
+RUN chmod +x "/root/.pkg-cache/${PKG_FETCH_VERSION}/fetched-${PKG_NODE_VERSION}-linux-x64"
 
 FROM build-deps AS build
 
