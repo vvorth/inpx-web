@@ -1,6 +1,6 @@
 {
   "name": "inpx-web",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "author": "AceAsket",
   "license": "CC0-1.0",
   "repository": "AceAsket/inpx-web",
@@ -13,6 +13,8 @@
     "build:linux": "npm run build:client && node build/prepkg.js linux && pkg -t node16-linux-x64 -C GZip --options max-old-space-size=4096,expose-gc -o dist/linux/inpx-web .",
     "build:linux-arm64": "npm run build:client && node build/prepkg.js linux-arm64 && pkg -t node16-linuxstatic-arm64 -C GZip --options max-old-space-size=4096,expose-gc -o dist/linux-arm64/inpx-web .",
     "build:win": "npm run build:client && node build/prepkg.js win && pkg -t node16-win-x64 -C GZip --options max-old-space-size=4096,expose-gc -o dist/win/inpx-web .",
+    "build:win-tools": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bundle-windows-tools.ps1",
+    "build:win-installer": "node build/windows-installer.js",
     "build:macos": "npm run build:client && node build/prepkg.js macos && pkg -t node16-macos-x64 -C GZip --options max-old-space-size=4096,expose-gc -o dist/macos/inpx-web .",
     "build:client-dev": "webpack --config build/webpack.dev.config.js",
     "build:all": "npm run build:linux && npm run build:win && npm run build:macos && npm run build:linux-arm64",
@@ -20,6 +22,7 @@
     "release": "npm run build:all && node build/release.js",
     "release:linux": "npm run build:linux && node build/release.js linux",
     "release:win": "npm run build:win && node build/release.js win",
+    "release:win-installer": "npm run build:win && npm run build:win-tools && npm run build:win-installer",
     "release:macos": "npm run build:macos && node build/release.js macos",
     "release:arm64": "npm run build:linux-arm64 && node build/release.js arm64",
     "postinstall": "npm run build:client-dev"

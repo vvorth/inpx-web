@@ -100,75 +100,15 @@ jobs:
       - name: Build binary
         run: npm run ${{ matrix.build_script }}
 
+      - name: Install Inno Setup
+        if: matrix.target == 'win'
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
       - name: Bundle Windows cover tools
         if: matrix.target == 'win'
         shell: pwsh
-        run: |
-          $binDir = Join-Path $PWD 'dist/win/bin'
-          New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-
-          $githubHeaders = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; 'X-GitHub-Api-Version' = '2022-11-28' }
-          $sevenZipRelease = Invoke-RestMethod -Uri $env:WINDOWS_7ZIP_RELEASE_API -Headers $githubHeaders
-          $sevenZipAsset = $sevenZipRelease.assets |
-            Where-Object { $_.name -like '7z*-extra.7z' } |
-            Select-Object -First 1
-          $sevenZipBootstrapAsset = $sevenZipRelease.assets |
-            Where-Object { $_.name -eq '7zr.exe' } |
-            Select-Object -First 1
-          if (-not $sevenZipAsset) {
-            throw 'Unable to find 7-Zip extra package in the latest release'
-          }
-          if (-not $sevenZipBootstrapAsset) {
-            throw 'Unable to find 7-Zip bootstrap extractor in the latest release'
-          }
-
-          $sevenZipArchive = Join-Path $env:RUNNER_TEMP $sevenZipAsset.name
-          $sevenZipBootstrap = Join-Path $env:RUNNER_TEMP '7zr-bootstrap.exe'
-          $sevenZipExtract = Join-Path $env:RUNNER_TEMP '7zip-extra'
-          if (Test-Path $sevenZipExtract) {
-            Remove-Item $sevenZipExtract -Recurse -Force
-          }
-
-          # Use 7zr only as a temporary extractor for the official extra package;
-          # the Windows release payload gets the full 7za.exe with PPMD support.
-          Invoke-WebRequest -Uri $sevenZipAsset.browser_download_url -OutFile $sevenZipArchive
-          Invoke-WebRequest -Uri $sevenZipBootstrapAsset.browser_download_url -OutFile $sevenZipBootstrap
-          & $sevenZipBootstrap x $sevenZipArchive "-o$sevenZipExtract" -y
-          $sevenZipSource = Get-ChildItem -Path $sevenZipExtract -Recurse -File -Filter '7za.exe' | Select-Object -First 1
-          if (-not $sevenZipSource) {
-            throw 'Unable to find 7za.exe in the 7-Zip extra package'
-          }
-          Copy-Item $sevenZipSource.FullName -Destination (Join-Path $binDir '7za.exe') -Force
-
-          $jxlArchive = Join-Path $env:RUNNER_TEMP 'jxl-x64-windows-static.zip'
-          $jxlExtract = Join-Path $env:RUNNER_TEMP 'jxl-x64-windows-static'
-          if (Test-Path $jxlExtract) {
-            Remove-Item $jxlExtract -Recurse -Force
-          }
-
-          Invoke-WebRequest -Uri $env:WINDOWS_JXL_URL -OutFile $jxlArchive
-          Expand-Archive -Path $jxlArchive -DestinationPath $jxlExtract -Force
-
-          Get-ChildItem -Path $jxlExtract -Recurse -File |
-            Where-Object { $_.Extension -in @('.exe', '.dll') } |
-            ForEach-Object {
-              Copy-Item $_.FullName -Destination (Join-Path $binDir $_.Name) -Force
-            }
-
-          $webpArchive = Join-Path $env:RUNNER_TEMP 'libwebp-windows-x64.zip'
-          $webpExtract = Join-Path $env:RUNNER_TEMP 'libwebp-windows-x64'
-          if (Test-Path $webpExtract) {
-            Remove-Item $webpExtract -Recurse -Force
-          }
-
-          Invoke-WebRequest -Uri $env:WINDOWS_WEBP_URL -OutFile $webpArchive
-          Expand-Archive -Path $webpArchive -DestinationPath $webpExtract -Force
-
-          Get-ChildItem -Path $webpExtract -Recurse -File |
-            Where-Object { $_.Extension -in @('.exe', '.dll') } |
-            ForEach-Object {
-              Copy-Item $_.FullName -Destination (Join-Path $binDir $_.Name) -Force
-            }
+        run: npm run build:win-tools
 
       - name: Bundle fb2cng converter
         shell: pwsh
@@ -226,11 +166,16 @@ jobs:
           Compress-Archive -Path (Join-Path $srcDir '*') -DestinationPath $archivePath -Force
           "ARCHIVE_PATH=$archivePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Build Windows installer
+        if: matrix.target == 'win'
+        shell: pwsh
+        run: npm run build:win-installer
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v6
         with:
           name: release-${{ matrix.target }}
-          path: ${{ env.ARCHIVE_PATH }}
+          path: dist/release/*
           if-no-files-found: error
 
   release:
@@ -287,6 +232,8 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
           prerelease: ${{ contains(github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name, '-rc') }}
           body_path: release-notes.md
-          files: release-assets/**/*.zip
+          files: |
+            release-assets/**/*.zip
+            release-assets/**/*.exe
           overwrite_files: true
 

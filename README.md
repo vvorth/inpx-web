@@ -661,6 +661,18 @@ npm run release
 
 Результат сборки будет доступен в каталоге `dist/release`
 
+Для Windows дополнительно можно собрать полноценный установщик `.exe`. Он устанавливает приложение в профиль пользователя, добавляет ярлыки в меню «Пуск», опциональный ярлык на рабочий стол, отдельный ярлык `Open web interface` на `http://127.0.0.1:12380` и стандартный uninstaller. Инсталлятор не регистрирует Windows-службу: `inpx-web` запускается как обычный локальный сервер. Ярлыки запускают приложение с рабочими данными в `%LOCALAPPDATA%\inpx-web`.
+
+Требуется Inno Setup 6: `ISCC.exe` должен быть доступен в `PATH`, либо путь к нему можно задать через `INNO_SETUP_COMPILER`.
+
+```bat
+npm run build:win
+npm run build:win-tools
+npm run build:win-installer
+```
+
+Готовый файл будет создан как `dist\release\inpx-web-<version>-win-setup.exe`.
+
 <a id="native_run" />
 
 ### Локальный запуск через Node.js без Docker

@@ -2027,10 +2027,11 @@ class WebWorker {
     async buildLocalDiscoveryShelfV2(kind = 'newest', limit = 8, options = {}) {
         let shelfConfig = null;
         if (kind === 'newest') {
+            const daysWindow = Math.max(0, parseInt(options.daysWindow, 10) || 0);
             shelfConfig = {
-                id: `newest-${options.daysWindow || 0}d`,
-                title: `Новинки за ${options.daysWindow || 0} дней`,
-                subtitle: `Книги, добавленные за последние ${options.daysWindow || 0} дней`,
+                id: `newest-${daysWindow}d`,
+                title: (daysWindow > 0 ? `Новинки за ${daysWindow} дней` : 'Последние поступления'),
+                subtitle: (daysWindow > 0 ? `Книги, добавленные за последние ${daysWindow} дней` : 'Самые свежие книги по дате в библиотеке'),
                 mode: 'newest',
             };
         } else if (kind === 'popular') {
@@ -2275,7 +2276,7 @@ class WebWorker {
         const popularityMap = await this.buildDiscoveryPopularityMap();
         const newestSeen = new Set();
 
-        for (const daysWindow of [7, 30, 90]) {
+        for (const daysWindow of [7, 30, 90, 180, 365]) {
             const newestShelf = await this.rememberDiscovery(
                 `discovery:${inpxHash}:newest:${daysWindow}:${newestLimit}`,
                 () => this.buildLocalDiscoveryShelfV2('newest', newestLimit, {
@@ -2290,6 +2291,20 @@ class WebWorker {
                         newestSeen.add(book._uid);
                 }
             }
+        }
+
+        if (!shelves.some(shelf => shelf && /^newest-\d+d$/.test(String(shelf.id || '')))) {
+            shelves.push({
+                id: 'newest-0d',
+                title: 'Новинки не найдены',
+                subtitle: 'В индексе нет книг с датой поступления за последний год',
+                mode: 'newest',
+                source: 'local',
+                sourceName: 'Локальная библиотека',
+                updatedAt: Date.now(),
+                items: [],
+                emptyMessage: 'Нет книг с датой поступления за последний год. Обновите индекс или используйте раздел «Книги».',
+            });
         }
 
         const popularShelf = await this.rememberDiscovery(

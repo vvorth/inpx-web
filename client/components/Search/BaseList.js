@@ -220,6 +220,15 @@ export default class BaseList {
         }, 1000);
     }
 
+    downloadHref(href) {
+        const link = document.createElement('a');
+        link.href = href;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    }
+
     async getErrorMessage(error) {
         if (error.response && error.response.data) {
             const responseData = error.response.data;
@@ -302,9 +311,7 @@ export default class BaseList {
                     this.downloadBlob(downloadResponse.data, fileName);
                 } else {
                     //скачивание
-                    const d = this.$refs.download;
-                    d.href = href;
-                    d.click();
+                    this.downloadHref(href);
                 }
             } else if (action == 'copyLink') {
                 //копирование ссылки

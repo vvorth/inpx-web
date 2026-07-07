@@ -551,6 +551,32 @@ async function testConfiguredConverterPathsHavePriority() {
     assert.strictEqual(bookConverter.calibreCommandCandidates(configured)[0], configured.calibre);
 }
 
+async function testDiscoveryNewestAvoidsUnboundedFallback() {
+    const WebWorker = require('../server/core/WebWorker');
+    const worker = Object.create(WebWorker.prototype);
+    worker.discoveryCache = new Map();
+    worker.checkMyState = () => {};
+    worker.getDiscoveryConfigForRequest = async() => ({
+        enabled: true,
+        shelfLimit: 8,
+        externalSource: 'none',
+    });
+    worker.dbConfig = async() => ({inpxHash: 'test-hash'});
+    worker.buildDiscoveryPopularityMap = async() => ({});
+    worker.getPersonalDiscoveryShelvesV2 = async() => [];
+    const newestWindows = [];
+    worker.buildLocalDiscoveryShelfV2 = async(kind, limit, options = {}) => {
+        if (kind === 'newest')
+            newestWindows.push(parseInt(options.daysWindow, 10) || 0);
+        return null;
+    };
+
+    const result = await worker.getDiscoveryShelvesV2({newestLimit: 8, popularLimit: 8});
+    assert.deepStrictEqual(newestWindows, [7, 30, 90, 180, 365]);
+    assert.deepStrictEqual(result.shelves.map(shelf => shelf.id), ['newest-0d']);
+    assert.deepStrictEqual(result.shelves[0].items, []);
+}
+
 const tests = [
     testTitleSearchKeepsIndexedPrefixFallbacks,
     testConvertedBookFileNames,
@@ -563,6 +589,7 @@ const tests = [
     testExternalDiscoveryMultiSourceSearch,
     testExternalDiscoverySingleFetch,
     testConfiguredConverterPathsHavePriority,
+    testDiscoveryNewestAvoidsUnboundedFallback,
 ];
 
 (async() => {
