@@ -26,6 +26,35 @@ function logRuntimeWarningOnce(message) {
     log(LM_ERR, message);
 }
 
+function getBookDownloadMimeType(fileName) {
+    const ext = path.extname(String(fileName || '')).toLowerCase();
+    switch (ext) {
+    case '.fb2':
+        return 'application/x-fictionbook+xml; charset=utf-8';
+    case '.epub':
+        return 'application/epub+zip';
+    case '.zip':
+        return 'application/zip';
+    case '.pdf':
+        return 'application/pdf';
+    case '.txt':
+        return 'text/plain; charset=utf-8';
+    case '.rtf':
+        return 'application/rtf';
+    case '.mobi':
+        return 'application/x-mobipocket-ebook';
+    case '.azw':
+    case '.azw3':
+        return 'application/vnd.amazon.ebook';
+    case '.doc':
+        return 'application/msword';
+    case '.docx':
+        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    default:
+        return null;
+    }
+}
+
 function generateZip(zipFile, dataFile, dataFileInZip) {
     return new Promise((resolve, reject) => {
         const zip = new yazl.ZipFile();
@@ -472,6 +501,9 @@ module.exports = (app, config) => {
                     if (gzipped)
                         res.set('Content-Encoding', 'gzip');
                     res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(downFileName)}`);
+                    const mimeType = getBookDownloadMimeType(downFileName);
+                    if (mimeType)
+                        res.set('Content-Type', mimeType);
                     res.sendFile(bookFile);
                     return;
                 } else {
