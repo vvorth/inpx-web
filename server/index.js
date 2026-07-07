@@ -233,7 +233,7 @@ async function main() {
     initHealthRoutes(app, config, webSocketController.webWorker, security, webSocketController);
 
     const initStatic = require('./static');
-    initStatic(app, config);
+    initStatic(app, config, webSocketController.webWorker);
 
     if (config.logQueries) {
         logQueries(app);

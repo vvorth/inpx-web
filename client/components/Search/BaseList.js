@@ -224,6 +224,19 @@ export default class BaseList {
         window.location.href = href;
     }
 
+    getDirectBookDownloadHref(book, format = '') {
+        const bookUid = this.getBookUid(book);
+        const root = String(this.config.rootPathStatic || '').replace(/\/$/, '');
+        const params = new URLSearchParams();
+        params.set('uid', bookUid);
+        if (format)
+            params.set('format', format);
+        else if (this.downloadAsZip)
+            params.set('zip', '1');
+
+        return `${window.location.origin}${root}/book/by-uid?${params.toString()}`;
+    }
+
     async getErrorMessage(error) {
         if (error.response && error.response.data) {
             const responseData = error.response.data;
@@ -281,6 +294,11 @@ export default class BaseList {
                 return;
             }
 
+            if (action == 'download') {
+                this.downloadHref(this.getDirectBookDownloadHref(book, format));
+                return;
+            }
+
             //подготовка
             const response = await this.api.getBookLink(book._uid);
             
@@ -299,15 +317,7 @@ export default class BaseList {
             }
 
             //action
-            if (action == 'download') {
-                if (format) {
-                    const downloadResponse = await axios.get(href, {responseType: 'blob'});
-                    const fileName = this.getDownloadFileName(downloadResponse, book, format);
-                    this.downloadBlob(downloadResponse.data, fileName);
-                } else {
-                    this.downloadHref(href);
-                }
-            } else if (action == 'copyLink') {
+            if (action == 'copyLink') {
                 //копирование ссылки
                 if (await utils.copyTextToClipboard(href))
                     this.$root.notify.success('Ссылка успешно скопирована');

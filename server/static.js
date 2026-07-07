@@ -321,7 +321,7 @@ async function extractBookCover(libid, config, sourceId = '') {
     return null;
 }
 
-module.exports = (app, config) => {
+module.exports = (app, config, webWorker = null) => {
     /*
     config.bookPathStatic = `${config.rootPathStatic}/book`;
     config.bookDir = `${config.publicFilesDir}/book`;
@@ -441,6 +441,42 @@ module.exports = (app, config) => {
 
         res.set('Cache-Control', 'no-store');
         res.download(backupFile, fileName);
+    });
+
+    app.get(`${config.bookPathStatic}/by-uid`, async(req, res) => {
+        if (!webWorker) {
+            res.sendStatus(404);
+            return;
+        }
+
+        try {
+            const bookUid = String(req.query.uid || '').trim();
+            const fileType = String(req.query.format || '').trim().toLowerCase();
+            const zip = String(req.query.zip || '') === '1';
+
+            if (!bookUid) {
+                res.sendStatus(404);
+                return;
+            }
+
+            if (fileType && !/^[a-z0-9_-]+$/.test(fileType)) {
+                res.sendStatus(400);
+                return;
+            }
+
+            const {link} = await webWorker.getBookLink(bookUid);
+            let href = link;
+
+            if (fileType)
+                href += `/${fileType}`;
+            else if (zip)
+                href += '/zip';
+
+            res.redirect(302, href);
+        } catch(e) {
+            log(LM_ERR, `book by uid error: ${e.message}`);
+            res.status(e.message && e.message.indexOf('404') >= 0 ? 404 : 500).send(e.message);
+        }
     });
 
     app.use([`${config.bookPathStatic}/:fileName/:fileType/:downloadName`, `${config.bookPathStatic}/:fileName/:fileType`, `${config.bookPathStatic}/:fileName`], async(req, res, next) => {
