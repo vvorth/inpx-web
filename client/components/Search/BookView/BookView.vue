@@ -109,6 +109,7 @@
 
                 <div class="book-actions" :class="{'book-actions--external-only': isExternalOnlyDiscoveryBook && !isCompactDiscoveryMode}">
                     <q-btn
+                        v-if="isExternalOnlyDiscoveryBook"
                         class="primary-action"
                         :class="{'primary-action--external-only': isExternalOnlyDiscoveryBook && !isCompactDiscoveryMode}"
                         color="primary"
@@ -116,6 +117,18 @@
                         no-caps
                         :icon="primaryActionIcon"
                         @click.stop.prevent="handlePrimaryAction"
+                    >
+                        {{ primaryActionLabel }}
+                    </q-btn>
+                    <q-btn
+                        v-else
+                        class="primary-action"
+                        color="primary"
+                        unelevated
+                        no-caps
+                        :icon="primaryActionIcon"
+                        :href="getDirectBookDownloadHref()"
+                        @click.stop
                     >
                         {{ primaryActionLabel }}
                     </q-btn>
@@ -300,15 +313,15 @@
                         </button>
 
                         <div v-if="formatMenuOpen" class="action-split-menu">
-                            <button
+                            <a
                                 v-for="format in extraFormats"
                                 :key="format"
-                                type="button"
                                 class="action-split-item"
-                                @click.stop.prevent="selectDownloadFormat(format)"
+                                :href="getDirectBookDownloadHref(format)"
+                                @click.stop
                             >
                                 {{ format.toUpperCase() }}
-                            </button>
+                            </a>
                         </div>
                     </div>
                 </div>
@@ -364,6 +377,7 @@ class BookView {
     showDates = false;
     showJson = false;
     coverError = false;
+    downloadAsZip = false;
     telegramMenuOpen = false;
     emailMenuOpen = false;
     formatMenuOpen = false;
@@ -390,6 +404,7 @@ class BookView {
         this.showDates = settings.showDates;
         this.showDeleted = settings.showDeleted;
         this.showJson = settings.showJson;
+        this.downloadAsZip = settings.downloadAsZip;
     }
 
     get settings() {
@@ -729,6 +744,24 @@ class BookView {
     selectDownloadFormat(format) {
         this.formatMenuOpen = false;
         this.emit('download', format);
+    }
+
+    getBookUid(book = this.book) {
+        return String(book._uid || book.bookUid || '').trim();
+    }
+
+    getDirectBookDownloadHref(format = '') {
+        const bookUid = this.getBookUid();
+        const root = String(this.config.rootPathStatic || '').replace(/\/$/, '');
+        const params = new URLSearchParams();
+        params.set('uid', bookUid);
+
+        if (format)
+            params.set('format', format);
+        else if (this.downloadAsZip)
+            params.set('zip', '1');
+
+        return `${window.location.origin}${root}/book/by-uid?${params.toString()}`;
     }
 
     get placeholderStyle() {
@@ -1533,6 +1566,7 @@ export default vueComponent(BookView);
     color: inherit;
     font: inherit;
     cursor: pointer;
+    text-decoration: none;
 }
 
 .action-split-item:hover {
