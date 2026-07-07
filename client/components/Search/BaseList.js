@@ -221,12 +221,7 @@ export default class BaseList {
     }
 
     downloadHref(href) {
-        const link = document.createElement('a');
-        link.href = href;
-        link.style.display = 'none';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
+        window.location.href = href;
     }
 
     async getErrorMessage(error) {
