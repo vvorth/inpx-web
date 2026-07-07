@@ -94,7 +94,7 @@ class Security {
 
     cookieOptions(req) {
         const root = this.config.rootPathStatic || '/';
-        const secure = req.secure || this.forwardedProto(req) === 'https';
+        const secure = this.isSecureRequest(req);
         return [
             'HttpOnly',
             'SameSite=Lax',
@@ -172,8 +172,20 @@ class Security {
         return session;
     }
 
+    isSecureRequest(req) {
+        return !!(req.secure || this.requestProto(req) === 'https' || this.forwardedProto(req) === 'https');
+    }
+
+    applySecurityHeaders(req, res) {
+        if (this.isSecureRequest(req)) {
+            res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+            res.setHeader('Content-Security-Policy', 'upgrade-insecure-requests');
+        }
+    }
+
     middleware() {
         return (req, res, next) => {
+            this.applySecurityHeaders(req, res);
             this.ensureSession(req, res);
             next();
         };

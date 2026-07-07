@@ -471,7 +471,7 @@ module.exports = (app, config) => {
                     //отдача файла
                     if (gzipped)
                         res.set('Content-Encoding', 'gzip');
-                    res.set('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(downFileName)}`);
+                    res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(downFileName)}`);
                     res.sendFile(bookFile);
                     return;
                 } else {
