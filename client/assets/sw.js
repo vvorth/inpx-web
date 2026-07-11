@@ -25,6 +25,7 @@ function isFreshShellPath(pathname) {
     withBase('/sw.js'),
     withBase('/manifest.webmanifest'),
     withBase('/reader.webmanifest'),
+    withBase('/build-id.txt'),
     withBase('/version.txt')
   ].includes(pathname);
 }
@@ -40,7 +41,9 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys
+        .filter((key) => key.startsWith('inpx-web-') && key !== CACHE_NAME)
+        .map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });
@@ -70,7 +73,11 @@ self.addEventListener('fetch', (event) => {
   if (isFreshShellPath(url.pathname)) {
     event.respondWith(
       fetch(noStoreRequest(request))
-        .catch(() => caches.match(withBase('/index.html')))
+        .catch(() => (
+          [withBase('/'), withBase('/index.html')].includes(url.pathname)
+            ? caches.match(withBase('/index.html'))
+            : caches.match(request)
+        ))
     );
     return;
   }

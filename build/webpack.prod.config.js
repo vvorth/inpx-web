@@ -1,6 +1,6 @@
 const fs = require('fs-extra');
 const path = require('path');
-//const webpack = require('webpack');
+const webpack = require('webpack');
 
 const { merge } = require('webpack-merge');
 const baseWpConfig = require('./webpack.base.config');
@@ -48,6 +48,9 @@ module.exports = merge(baseWpConfig, {
         ]
     },
     plugins: [
+        new webpack.DefinePlugin({
+            __INPX_WEB_BUILD_ID__: JSON.stringify(buildId),
+        }),
         new MiniCssExtractPlugin({
             filename: "[name].[contenthash].css"
         }),
@@ -63,7 +66,7 @@ module.exports = merge(baseWpConfig, {
                     to: `${publicDir}/`,
                     noErrorOnMissing: true,
                     transform(content, absoluteFrom) {
-                        if (path.basename(absoluteFrom) !== 'sw.js')
+                        if (!['sw.js', 'build-id.txt'].includes(path.basename(absoluteFrom)))
                             return content;
 
                         return content.toString('utf8').replace(/__INPX_WEB_BUILD_ID__/g, buildId);
