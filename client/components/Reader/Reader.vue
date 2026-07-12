@@ -14,12 +14,14 @@
                 <q-btn
                     flat
                     no-caps
-                    icon="la la-arrow-left"
+                    :icon="readerNoteReturnPoint ? 'la la-undo-alt' : 'la la-arrow-left'"
                     class="reader-back-btn"
-                    :aria-label="uiText.back"
+                    :class="{'reader-back-btn--note-return': readerNoteReturnPoint}"
+                    :aria-label="readerNoteReturnPoint ? uiText.noteReturn : uiText.back"
+                    :data-testid="readerNoteReturnPoint ? 'reader-note-return' : null"
                     @click="goBack"
                 >
-                    {{ uiText.back }}
+                    {{ readerNoteReturnPoint ? uiText.noteReturn : uiText.back }}
                 </q-btn>
 
                 <div class="reader-book-meta">
@@ -911,17 +913,6 @@
                 </div>
             </transition>
 
-            <q-btn
-                v-if="readerNoteReturnPoint"
-                flat
-                no-caps
-                icon="la la-arrow-left"
-                class="reader-note-return-btn"
-                @click="returnFromReaderNote"
-            >
-                {{ uiText.noteReturn }}
-            </q-btn>
-
             <div v-if="readerDebugEnabled" class="reader-debug-panel">
                 <div class="reader-debug-title">Reader Debug</div>
                 <div>mode: {{ isCompactLayout ? 'mobile' : 'desktop' }} / {{ isPagedMode ? 'paged' : 'scroll' }}</div>
@@ -1093,14 +1084,25 @@
                     <button
                         v-if="hasAnnotation"
                         type="button"
-                        class="reader-dialog-link reader-dialog-link--annotation"
+                        class="reader-dialog-link reader-dialog-link--feature"
                         @click="showReaderAnnotation"
                     >
                         <q-icon name="la la-info-circle" />
                         <span>{{ uiText.annotation }}</span>
                         <q-icon name="la la-angle-right" />
                     </button>
-                    <div v-if="hasAnnotation && displayContents.length" class="reader-dialog-separator" role="separator"></div>
+                    <button
+                        v-if="hasBookNotes"
+                        type="button"
+                        class="reader-dialog-link reader-dialog-link--feature"
+                        data-testid="reader-notes-link"
+                        @click="showReaderNotes"
+                    >
+                        <q-icon name="la la-sticky-note" />
+                        <span>{{ uiText.bookNotes }}</span>
+                        <q-icon name="la la-angle-right" />
+                    </button>
+                    <div v-if="(hasAnnotation || hasBookNotes) && displayContents.length" class="reader-dialog-separator" role="separator"></div>
                     <button
                         v-for="item in displayContents"
                         :key="item.id"
@@ -1302,14 +1304,25 @@
                         <button
                             v-if="hasAnnotation"
                             type="button"
-                            class="reader-dialog-link reader-dialog-link--annotation"
+                            class="reader-dialog-link reader-dialog-link--feature"
                             @click="showReaderAnnotation"
                         >
                             <q-icon name="la la-info-circle" />
                             <span>{{ uiText.annotation }}</span>
                             <q-icon name="la la-angle-right" />
                         </button>
-                        <div v-if="hasAnnotation && displayContents.length" class="reader-dialog-separator" role="separator"></div>
+                        <button
+                            v-if="hasBookNotes"
+                            type="button"
+                            class="reader-dialog-link reader-dialog-link--feature"
+                            data-testid="reader-notes-link"
+                            @click="showReaderNotes"
+                        >
+                            <q-icon name="la la-sticky-note" />
+                            <span>{{ uiText.bookNotes }}</span>
+                            <q-icon name="la la-angle-right" />
+                        </button>
+                        <div v-if="(hasAnnotation || hasBookNotes) && displayContents.length" class="reader-dialog-separator" role="separator"></div>
                         <button
                             v-for="item in displayContents"
                             :key="item.id"
@@ -1591,6 +1604,7 @@ class Reader {
     coverIntrinsicLoadId = 0;
     readerHtml = '';
     readerAnnotationHtml = '';
+    readerNotesAnchorId = '';
     readerSearchText = '';
     pagedPages = [];
     currentPageIndex = 0;
@@ -2647,6 +2661,7 @@ class Reader {
             refreshingPagesCompact: '\u041f\u0435\u0440\u0435\u0441\u0442\u0440\u0430\u0438\u0432\u0430\u044e \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u044b...',
             contents: '\u0421\u043e\u0434\u0435\u0440\u0436\u0430\u043d\u0438\u0435',
             annotation: '\u0410\u043d\u043d\u043e\u0442\u0430\u0446\u0438\u044f',
+            bookNotes: '\u041f\u0440\u0438\u043c\u0435\u0447\u0430\u043d\u0438\u044f',
             backToContents: '\u041d\u0430\u0437\u0430\u0434 \u043a \u0441\u043e\u0434\u0435\u0440\u0436\u0430\u043d\u0438\u044e',
             show: '\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c',
             hide: '\u0421\u043a\u0440\u044b\u0442\u044c',
@@ -3454,8 +3469,12 @@ class Reader {
         return !!String(this.readerAnnotationHtml || '').trim();
     }
 
+    get hasBookNotes() {
+        return !!String(this.readerNotesAnchorId || '').trim();
+    }
+
     get hasContentsMenu() {
-        return this.hasContents || this.hasAnnotation;
+        return this.hasContents || this.hasAnnotation || this.hasBookNotes;
     }
 
     get hasBookmarks() {
@@ -3576,6 +3595,15 @@ class Reader {
             this.contentsPanelView = 'annotation';
     }
 
+    showReaderNotes() {
+        if (!this.hasBookNotes)
+            return;
+
+        this.jumpToReaderAnchor(this.readerNotesAnchorId, {
+            returnPoint: this.captureReaderNoteReturnPoint(),
+        });
+    }
+
     showContentsList() {
         this.contentsPanelView = 'contents';
     }
@@ -3680,6 +3708,7 @@ class Reader {
         this.bookPreparing = false;
         this.readerHtml = '';
         this.readerAnnotationHtml = '';
+        this.readerNotesAnchorId = '';
         this.readerSearchText = '';
         this.contents = [];
         this.bookmarks = [];
@@ -8326,10 +8355,34 @@ class Reader {
         }).trim();
     }
 
+    createReaderNotesAnchorId(parser) {
+        const baseId = 'reader-book-notes';
+        const usedIds = new Set();
+        parser.eachDeepSelf((node) => {
+            if (node.type !== 1)
+                return;
+
+            const attrs = node.attrs();
+            const nodeId = attrs && (attrs.get('id') || attrs.get('xml:id') || attrs.get('l:id') || attrs.get('name'));
+            if (nodeId)
+                usedIds.add(String(nodeId).trim());
+        });
+
+        let anchorId = baseId;
+        let suffix = 2;
+        while (usedIds.has(anchorId)) {
+            anchorId = `${baseId}-${suffix}`;
+            suffix += 1;
+        }
+        return anchorId;
+    }
+
     buildReaderHtml(parser) {
         const parts = [];
         const imageMap = this.extractImageMap(parser);
         const state = {sectionIndex: 0};
+        const notesAnchorId = this.createReaderNotesAnchorId(parser);
+        let notesAnchorAdded = false;
 
         for (const body of parser.$$array('/body')) {
             const attrs = (body.attrs() || {});
@@ -8342,12 +8395,19 @@ class Reader {
                 contentsAnchor: bodyName !== 'notes',
             });
 
-            if (bodyName === 'notes')
-                parts.push(`<section class="reader-notes"><h2>Примечания</h2>${html}</section>`);
-            else
+            if (bodyName === 'notes') {
+                if (!String(html || '').trim())
+                    continue;
+
+                const anchorAttribute = notesAnchorAdded ? '' : ` id="${this.escapeHtml(notesAnchorId)}"`;
+                parts.push(`<section${anchorAttribute} class="reader-notes"><h2>Примечания</h2>${html}</section>`);
+                notesAnchorAdded = true;
+            } else {
                 parts.push(`<section class="reader-section">${html}</section>`);
+            }
         }
 
+        this.readerNotesAnchorId = notesAnchorAdded ? notesAnchorId : '';
         return parts.join('\n');
     }
 
@@ -8502,6 +8562,7 @@ class Reader {
         this.error = '';
         this.readerHtml = '';
         this.readerAnnotationHtml = '';
+        this.readerNotesAnchorId = '';
         this.readerSearchText = '';
         this.contents = [];
         this.bookmarks = [];
@@ -10598,6 +10659,14 @@ export default vueComponent(Reader);
     min-width: 0;
 }
 
+.reader-back-btn--note-return {
+    border: 1px solid color-mix(in srgb, var(--reader-accent) 38%, var(--reader-border));
+    border-radius: 14px;
+    background: var(--reader-accent-soft);
+    color: var(--reader-accent);
+    font-weight: 800;
+}
+
 .reader-toolbar--home {
     align-items: stretch;
     justify-content: flex-start;
@@ -11360,18 +11429,6 @@ export default vueComponent(Reader);
     border-radius: 18px;
     box-shadow: 0 20px 44px rgba(0, 0, 0, 0.18);
     font-size: 14px;
-}
-
-.reader-note-return-btn {
-    position: absolute;
-    right: 18px;
-    bottom: 18px;
-    z-index: 28;
-    border: 1px solid var(--reader-border);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--reader-surface) 94%, transparent);
-    color: var(--reader-text);
-    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.18);
 }
 
 .reader-reflow-fade-enter-active,
@@ -12364,7 +12421,7 @@ export default vueComponent(Reader);
     cursor: pointer;
 }
 
-.reader-dialog-link--annotation {
+.reader-dialog-link--feature {
     display: grid;
     grid-template-columns: 22px minmax(0, 1fr) 18px;
     align-items: center;
@@ -12375,7 +12432,7 @@ export default vueComponent(Reader);
     font-weight: 800;
 }
 
-.reader-dialog-link--annotation .q-icon:last-child {
+.reader-dialog-link--feature .q-icon:last-child {
     justify-self: end;
 }
 
@@ -12768,6 +12825,17 @@ export default vueComponent(Reader);
 .reader-theme-eink .reader-page-slide-y-back-leave-active {
     transition: none;
     will-change: auto;
+}
+
+@media (max-width: 1023.98px) {
+    .reader-back-btn--note-return {
+        min-width: 42px;
+        min-height: 42px;
+    }
+
+    .reader-back-btn--note-return :deep(.block) {
+        display: none;
+    }
 }
 
 @media (max-width: 900px) {

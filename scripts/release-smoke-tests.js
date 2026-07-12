@@ -136,15 +136,15 @@ async function testFb2ContentsExcludeNotesBodies() {
                 </title-info>
             </description>
             <body>
-                <section><title><p>От автора</p></title></section>
+                <section><title><p>От автора</p></title><p>Ссылка <a l:href="#note-1" type="note">[1]</a></p></section>
                 <section>
                     <title><p>1</p></title>
                     <section><title><p>Вложенная глава</p></title></section>
                 </section>
             </body>
             <body name=" NoTeS ">
-                <section><title><p>1</p></title><p>Текст сноски</p></section>
-                <section><title><p>2</p></title><p>Ещё одна сноска</p></section>
+                <section id="note-1"><title><p>1</p></title><p>Текст сноски</p></section>
+                <section id="note-2"><title><p>2</p></title><p>Ещё одна сноска</p></section>
             </body>
         </FictionBook>
     `, {lowerCase: true});
@@ -154,12 +154,20 @@ async function testFb2ContentsExcludeNotesBodies() {
     assert.strictEqual(annotation.length, 2);
     assert.strictEqual(annotation[0][1], 'p');
 
-    const contents = makeWorker().extractFb2Contents(parser);
-    assert.deepStrictEqual(contents, [
+    const expectedContents = [
         {title: 'От автора', level: 0},
         {title: '1', level: 0},
         {title: 'Вложенная глава', level: 1},
-    ]);
+    ];
+    assert.deepStrictEqual(makeWorker().extractFb2Contents(parser), expectedContents);
+
+    const readerSource = await fs.readFile(path.resolve(__dirname, '../client/components/Reader/Reader.vue'), 'utf8');
+    const readerContentsStart = readerSource.indexOf('    extractReaderContents(parser) {');
+    const readerContentsEnd = readerSource.indexOf('    escapeCssId(id = \'\') {', readerContentsStart);
+    assert.ok(readerContentsStart >= 0 && readerContentsEnd > readerContentsStart);
+    const readerContentsMethod = readerSource.slice(readerContentsStart, readerContentsEnd).trim();
+    const ReaderContents = new Function(`return class ReaderContents {${readerContentsMethod}}`)();
+    assert.deepStrictEqual(new ReaderContents().extractReaderContents(parser), expectedContents);
 }
 
 async function testReaderAnnotationStaysOutsideReadingFlow() {
@@ -230,6 +238,119 @@ async function testReaderAnnotationStaysOutsideReadingFlow() {
     localAnchor.handler.handleReaderAnnotationClick(localAnchor.event);
     assert.strictEqual(localAnchor.jumps.length, 0);
     assert.strictEqual(localScrolls, 1);
+}
+
+async function testReaderBookNotesMenuAndReturnLayout() {
+    const readerSource = await fs.readFile(path.resolve(__dirname, '../client/components/Reader/Reader.vue'), 'utf8');
+
+    assert.match(readerSource, /readerNotesAnchorId = '';/);
+    assert.match(readerSource, /get hasBookNotes\(\)[\s\S]{0,120}readerNotesAnchorId/);
+    assert.match(readerSource, /get hasContentsMenu\(\)[\s\S]{0,180}this\.hasContents \|\| this\.hasAnnotation \|\| this\.hasBookNotes/);
+    assert.strictEqual((readerSource.match(/data-testid="reader-notes-link"/g) || []).length, 2);
+    assert.strictEqual((readerSource.match(/'reader-note-return'/g) || []).length, 1);
+    assert.match(readerSource, /v-if="\(hasAnnotation \|\| hasBookNotes\) && displayContents\.length"/);
+    assert.match(readerSource, /bookNotes: '\\u041f\\u0440\\u0438\\u043c\\u0435\\u0447\\u0430\\u043d\\u0438\\u044f'/);
+
+    const firstAnnotationLink = readerSource.indexOf('@click="showReaderAnnotation"');
+    const firstNotesLink = readerSource.indexOf('@click="showReaderNotes"', firstAnnotationLink);
+    const firstFeatureSeparator = readerSource.indexOf('(hasAnnotation || hasBookNotes) && displayContents.length', firstNotesLink);
+    assert.ok(firstAnnotationLink >= 0 && firstNotesLink > firstAnnotationLink);
+    assert.ok(firstFeatureSeparator > firstNotesLink);
+
+    const anchorMethodStart = readerSource.indexOf('    createReaderNotesAnchorId(parser) {');
+    const anchorMethodEnd = readerSource.indexOf('    buildReaderHtml(parser) {', anchorMethodStart);
+    assert.ok(anchorMethodStart >= 0 && anchorMethodEnd > anchorMethodStart);
+    const anchorMethod = readerSource.slice(anchorMethodStart, anchorMethodEnd).trim();
+    const NotesAnchor = new Function(`return class NotesAnchor {${anchorMethod}}`)();
+    const anchorHelper = new NotesAnchor();
+    const anchorId = anchorHelper.createReaderNotesAnchorId({
+        eachDeepSelf(callback) {
+            callback({type: 1, attrs: () => new Map([['id', 'reader-book-notes']])});
+            callback({type: 1, attrs: () => new Map([['xml:id', 'reader-book-notes-2']])});
+        },
+    });
+    assert.strictEqual(anchorId, 'reader-book-notes-3');
+
+    const builderMethodStart = readerSource.indexOf('    buildReaderHtml(parser) {');
+    const builderMethodEnd = readerSource.indexOf('    createFb2Parser(source = \'\') {', builderMethodStart);
+    assert.ok(builderMethodStart >= 0 && builderMethodEnd > builderMethodStart);
+    const builderMethod = readerSource.slice(builderMethodStart, builderMethodEnd).trim();
+    const NotesBuilder = new Function(`return class NotesBuilder {${builderMethod}}`)();
+    const makeBody = (name, marker) => ({
+        attrs: () => ({name}),
+        rawNodes: [[1, 'body', [], [marker]]],
+    });
+    const notesBuilder = new NotesBuilder();
+    notesBuilder.extractImageMap = () => new Map();
+    notesBuilder.createReaderNotesAnchorId = () => 'reader-book-notes';
+    notesBuilder.escapeHtml = value => value;
+    notesBuilder.renderBlockNodes = (nodes) => {
+        if (nodes[0] === 'main')
+            return '<p>Основной текст</p>';
+        if (nodes[0] === 'note-1')
+            return '<section id="note-1"><p>Первая сноска</p></section>';
+        if (nodes[0] === 'note-2')
+            return '<section id="note-2"><p>Вторая сноска</p></section>';
+        return '';
+    };
+    const notesHtml = notesBuilder.buildReaderHtml({
+        $$array: () => [makeBody('', 'main'), makeBody('notes', 'note-1'), makeBody(' NoTeS ', 'note-2')],
+    });
+    assert.strictEqual(notesBuilder.readerNotesAnchorId, 'reader-book-notes');
+    assert.strictEqual((notesHtml.match(/id="reader-book-notes"/g) || []).length, 1);
+    assert.strictEqual((notesHtml.match(/class="reader-notes"/g) || []).length, 2);
+
+    const emptyNotesBuilder = new NotesBuilder();
+    emptyNotesBuilder.extractImageMap = () => new Map();
+    emptyNotesBuilder.createReaderNotesAnchorId = () => 'reader-book-notes';
+    emptyNotesBuilder.escapeHtml = value => value;
+    emptyNotesBuilder.renderBlockNodes = () => '   ';
+    const emptyNotesHtml = emptyNotesBuilder.buildReaderHtml({
+        $$array: () => [makeBody('notes', 'empty-note')],
+    });
+    assert.strictEqual(emptyNotesBuilder.readerNotesAnchorId, '');
+    assert.strictEqual(emptyNotesHtml, '');
+
+    const showNotesStart = readerSource.indexOf('    showReaderNotes() {');
+    const showNotesEnd = readerSource.indexOf('    showContentsList() {', showNotesStart);
+    assert.ok(showNotesStart >= 0 && showNotesEnd > showNotesStart);
+    const showNotesMethod = readerSource.slice(showNotesStart, showNotesEnd).trim();
+    const NotesNavigation = new Function(`return class NotesNavigation {${showNotesMethod}}`)();
+    const notesNavigation = new NotesNavigation();
+    const jumps = [];
+    notesNavigation.hasBookNotes = true;
+    notesNavigation.readerNotesAnchorId = 'reader-book-notes';
+    notesNavigation.captureReaderNoteReturnPoint = () => ({pageIndex: 6, scrollTop: 240});
+    notesNavigation.jumpToReaderAnchor = (id, options) => jumps.push({id, options});
+    notesNavigation.showReaderNotes();
+    assert.deepStrictEqual(jumps, [{
+        id: 'reader-book-notes',
+        options: {returnPoint: {pageIndex: 6, scrollTop: 240}},
+    }]);
+
+    assert.match(readerSource, /:class="\{'reader-back-btn--note-return': readerNoteReturnPoint\}"/);
+    assert.match(readerSource, /:aria-label="readerNoteReturnPoint \? uiText\.noteReturn : uiText\.back"/);
+    assert.match(readerSource, /:data-testid="readerNoteReturnPoint \? 'reader-note-return' : null"/);
+    assert.match(readerSource, /\{\{ readerNoteReturnPoint \? uiText\.noteReturn : uiText\.back \}\}/);
+    assert.doesNotMatch(readerSource, /class="reader-note-return-btn"/);
+    assert.match(readerSource, /v-if="bookUid && isCompactLayout && \(showCompactStatusBar \|\| !compactChromeHidden \|\| controlsOpen\)"/);
+    assert.match(readerSource, /v-if="bookUid && showDesktopStatusBar"/);
+
+    const goBackStart = readerSource.indexOf('    goBack() {');
+    const goBackEnd = readerSource.indexOf('    toggleControls() {', goBackStart);
+    assert.ok(goBackStart >= 0 && goBackEnd > goBackStart);
+    const goBackMethod = readerSource.slice(goBackStart, goBackEnd).trim();
+    const ReaderBack = new Function(`return class ReaderBack {${goBackMethod}}`)();
+    const readerBack = new ReaderBack();
+    let returnedFromNote = 0;
+    readerBack.readerNoteReturnPoint = {pageIndex: 6};
+    readerBack.returnFromReaderNote = () => { returnedFromNote += 1; };
+    readerBack.$router = {
+        back() { throw new Error('router back must not run while returning from a note'); },
+        push() { throw new Error('router push must not run while returning from a note'); },
+    };
+    readerBack.goBack();
+    assert.strictEqual(returnedFromNote, 1);
 }
 
 async function testReaderImageDataUrlsAreValidated() {
@@ -913,6 +1034,7 @@ const tests = [
     testTitleSearchKeepsIndexedPrefixFallbacks,
     testFb2ContentsExcludeNotesBodies,
     testReaderAnnotationStaysOutsideReadingFlow,
+    testReaderBookNotesMenuAndReturnLayout,
     testReaderImageDataUrlsAreValidated,
     testConvertedBookFileNames,
     testAdminSettingsRestoreKeepsSecrets,
