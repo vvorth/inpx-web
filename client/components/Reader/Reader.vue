@@ -16,6 +16,7 @@
                     no-caps
                     icon="la la-arrow-left"
                     class="reader-back-btn"
+                    :aria-label="uiText.back"
                     @click="goBack"
                 >
                     {{ uiText.back }}
@@ -296,6 +297,22 @@
                                     <div class="reader-stepper-value">{{ 100 - activePreferences.einkInkTone }}%</div>
                                     <q-btn flat dense round icon="la la-plus" @click="changeEinkInkTone(-2)" />
                                 </div>
+                            </div>
+                        </section>
+
+                        <section class="reader-controls-group">
+                            <div class="reader-controls-group-title">{{ uiText.controlsReset }}</div>
+                            <div class="reader-reset-control">
+                                <q-btn
+                                    flat
+                                    dense
+                                    no-caps
+                                    icon="la la-undo"
+                                    @click="resetReaderAppearance"
+                                >
+                                    {{ uiText.resetReaderAppearance }}
+                                </q-btn>
+                                <div class="reader-control-hint">{{ uiText.resetReaderAppearanceHint }}</div>
                             </div>
                         </section>
                     </template>
@@ -592,7 +609,7 @@
                     <span>{{ uiText.loadingBook }}</span>
                 </div>
 
-                <div v-if="!readerHomeLoading" class="reader-home-tools">
+                <div v-if="!readerHomeLoading && !readerHomeCanLogin" class="reader-home-tools">
                     <div class="reader-home-tabs">
                         <div class="reader-home-tab-list">
                             <button
@@ -612,6 +629,7 @@
                             round
                             icon="la la-sync"
                             class="reader-home-refresh-btn reader-home-action-btn"
+                            :aria-label="uiText.refresh"
                             @click="loadReaderHome"
                         >
                             <q-tooltip :delay="600">{{ uiText.refresh }}</q-tooltip>
@@ -648,7 +666,7 @@
                     </div>
                 </div>
 
-                <div v-if="!readerHomeLoading && readerHomeBooks.length" class="reader-home-list">
+                <div v-if="!readerHomeLoading && !readerHomeCanLogin && readerHomeBooks.length" class="reader-home-list">
                     <div
                         v-for="book in readerHomeBooks"
                         :key="book.bookUid"
@@ -700,6 +718,23 @@
                             </q-btn>
                         </div>
                     </div>
+                </div>
+
+                <div v-else-if="!readerHomeLoading && readerHomeCanLogin" class="reader-home-state reader-home-state--locked">
+                    <q-icon name="la la-user-lock" size="28px" />
+                    <div>
+                        <div class="reader-home-empty-title">{{ uiText.profileLoginRequired }}</div>
+                        <div class="reader-home-empty-text">{{ uiText.profileLoginReaderHint }}</div>
+                    </div>
+                    <q-btn
+                        flat
+                        no-caps
+                        icon="la la-sign-in-alt"
+                        class="reader-home-action-btn reader-home-action-btn--primary"
+                        @click="promptReaderProfileLogin"
+                    >
+                        {{ uiText.profileLoginAction }}
+                    </q-btn>
                 </div>
 
                 <div v-else-if="!readerHomeLoading" class="reader-home-state reader-home-state--empty">
@@ -1421,6 +1456,9 @@ class Reader {
     authorLine = '';
     seriesLine = '';
     coverSrc = '';
+    coverIntrinsicWidth = 0;
+    coverIntrinsicHeight = 0;
+    coverIntrinsicLoadId = 0;
     readerHtml = '';
     readerSearchText = '';
     pagedPages = [];
@@ -1500,6 +1538,8 @@ class Reader {
         pageOuterGap: 28,
         pageOuterGapTop: 28,
         pageOuterGapBottom: 28,
+        regularProfile: {},
+        compactProfile: {},
         einkProfile: {
             readMode: 'paged',
             pagedNavigation: 'tap',
@@ -1535,8 +1575,11 @@ class Reader {
             einkContrast: 92,
             einkPaperTone: 94,
             einkInkTone: 10,
+            regularProfile: {},
+            compactProfile: {},
         },
     };
+    defaultReaderPreferences = _.cloneDeep(this.preferences);
     progress = {
         percent: 0,
         sectionId: '',
@@ -2181,8 +2224,19 @@ class Reader {
     }
 
     get readerDialogStyle() {
-        if (this.preferences.theme === 'eink')
-            return this.readerThemeStyle;
+        if (this.preferences.theme === 'eink') {
+            const themeStyle = this.readerThemeStyle;
+            return Object.assign({}, themeStyle, {
+                '--reader-bg': themeStyle['--reader-eink-bg'],
+                '--reader-surface': themeStyle['--reader-eink-surface'],
+                '--reader-surface-2': themeStyle['--reader-eink-surface-2'],
+                '--reader-text': themeStyle['--reader-eink-text'],
+                '--reader-muted': themeStyle['--reader-eink-muted'],
+                '--reader-border': themeStyle['--reader-eink-border'],
+                '--reader-accent': themeStyle['--reader-eink-text'],
+                '--reader-accent-soft': themeStyle['--reader-eink-accent-soft'],
+            });
+        }
 
         const theme = String(this.preferences.theme || 'dark');
         if (theme === 'sepia') {
@@ -2366,6 +2420,7 @@ class Reader {
             controlsPage: '\u0421\u0442\u0440\u0430\u043d\u0438\u0446\u0430',
             controlsBackground: '\u0424\u043e\u043d',
             controlsStatus: '\u0421\u0442\u0430\u0442\u0443\u0441',
+            controlsReset: '\u0421\u0431\u0440\u043e\u0441',
             controlsView: '\u0412\u0438\u0434',
             controlsTheme: '\u0422\u0435\u043c\u0430',
             controlsFont: '\u0428\u0440\u0438\u0444\u0442',
@@ -2425,6 +2480,10 @@ class Reader {
             backgroundPagesTransparent: '\u0422\u0435\u043a\u0441\u0442 \u043d\u0430 \u0444\u043e\u043d\u0435',
             backgroundStatusSolid: '\u0421\u0442\u0430\u0442\u0443\u0441',
             backgroundStatusTransparent: '\u0421\u0442\u0430\u0442\u0443\u0441 \u043d\u0430 \u0444\u043e\u043d\u0435',
+            resetReaderAppearance: '\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u043e\u0444\u043e\u0440\u043c\u043b\u0435\u043d\u0438\u0435',
+            resetReaderAppearanceHint: '\u041f\u0440\u043e\u0433\u0440\u0435\u0441\u0441 \u0438 \u0437\u0430\u043a\u043b\u0430\u0434\u043a\u0438 \u043e\u0441\u0442\u0430\u043d\u0443\u0442\u0441\u044f.',
+            resetReaderAppearanceConfirm: '\u0412\u0435\u0440\u043d\u0443\u0442\u044c \u0441\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u043e\u0435 \u043e\u0444\u043e\u0440\u043c\u043b\u0435\u043d\u0438\u0435 \u0447\u0438\u0442\u0430\u043b\u043a\u0438? \u041f\u0440\u043e\u0433\u0440\u0435\u0441\u0441 \u0438 \u0437\u0430\u043a\u043b\u0430\u0434\u043a\u0438 \u043d\u0435 \u0438\u0437\u043c\u0435\u043d\u044f\u0442\u0441\u044f.',
+            resetReaderAppearanceSuccess: '\u041e\u0444\u043e\u0440\u043c\u043b\u0435\u043d\u0438\u0435 \u0447\u0438\u0442\u0430\u043b\u043a\u0438 \u0441\u0431\u0440\u043e\u0448\u0435\u043d\u043e.',
             backgroundTooLarge: '\u041a\u0430\u0440\u0442\u0438\u043d\u043a\u0430 \u0444\u043e\u043d\u0430 \u0434\u043e\u043b\u0436\u043d\u0430 \u0431\u044b\u0442\u044c \u0434\u043e 4 \u041c\u0411.',
             backgroundInvalid: '\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0444\u0430\u0439\u043b \u043a\u0430\u0440\u0442\u0438\u043d\u043a\u0438.',
             einkContrast: '\u041a\u043e\u043d\u0442\u0440\u0430\u0441\u0442',
@@ -2458,7 +2517,7 @@ class Reader {
         if (this.isPagedMode) {
             if (this.isCompactLayout) {
                 return [
-                    '\u041a\u0430\u0441\u0430\u043d\u0438\u0435 \u043f\u043e \u0432\u0435\u0440\u0445\u0443/\u043d\u0438\u0437\u0443 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u044b \u043b\u0438\u0441\u0442\u0430\u0435\u0442 \u043a\u043d\u0438\u0433\u0443.',
+                    '\u041a\u0430\u0441\u0430\u043d\u0438\u0435 \u0441\u043b\u0435\u0432\u0430/\u0441\u043f\u0440\u0430\u0432\u0430 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u044b \u043b\u0438\u0441\u0442\u0430\u0435\u0442 \u043a\u043d\u0438\u0433\u0443.',
                     '\u0421\u0432\u0430\u0439\u043f \u0432\u0432\u0435\u0440\u0445/\u0432\u043d\u0438\u0437 \u0438\u043b\u0438 \u0432\u043b\u0435\u0432\u043e/\u0432\u043f\u0440\u0430\u0432\u043e \u0442\u043e\u0436\u0435 \u043f\u0435\u0440\u0435\u043b\u0438\u0441\u0442\u044b\u0432\u0430\u0435\u0442.',
                     '\u041a\u0430\u0441\u0430\u043d\u0438\u0435 \u043f\u043e \u0446\u0435\u043d\u0442\u0440\u0443 \u043f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0435\u0442 \u0438\u043b\u0438 \u0441\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u043f\u0430\u043d\u0435\u043b\u0438.',
                     '\u041a\u043d\u043e\u043f\u043a\u0430 \u00ab?\u00bb \u0432\u0441\u0435\u0433\u0434\u0430 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u044d\u0442\u0443 \u043f\u043e\u0434\u0441\u043a\u0430\u0437\u043a\u0443.',
@@ -3812,6 +3871,34 @@ class Reader {
             this.refreshCompactSettingsViewport();
     }
 
+    async resetReaderAppearance() {
+        const dialog = this.$root && this.$root.stdDialog;
+        const confirmed = dialog
+            ? await dialog.confirm(this.uiText.resetReaderAppearanceConfirm, this.uiText.resetReaderAppearance, {
+                dialogClass: 'std-dialog-card--reader',
+                dialogStyle: this.readerDialogStyle,
+            })
+            : true;
+        if (!confirmed)
+            return;
+
+        if (this.savePreferencesDebounced && this.savePreferencesDebounced.cancel)
+            this.savePreferencesDebounced.cancel();
+
+        this.preferences = _.cloneDeep(this.defaultReaderPreferences);
+        this.writeStoredReaderPreferences();
+        this.requestReaderSettingsReflow();
+        try {
+            await this.persistPreferences();
+        } catch (e) {
+            if ((e && e.message) !== 'need_profile_login')
+                throw e;
+        }
+
+        if (this.$root && this.$root.notify)
+            this.$root.notify.success(this.uiText.resetReaderAppearanceSuccess, '', this.readerNotifyOptions);
+    }
+
     setBackgroundTransparency(key = '', enabled = false) {
         const allowed = ['backgroundTransparentPages', 'backgroundTransparentStatus'];
         if (!allowed.includes(key))
@@ -4421,6 +4508,58 @@ class Reader {
                 this.endLayoutRefresh(160);
             });
         });
+    }
+
+    async loadCoverIntrinsicSize(src = '') {
+        const requestId = ++this.coverIntrinsicLoadId;
+        const safeSrc = String(src || '').trim();
+        const fallback = safeSrc
+            ? {width: 140, height: 210}
+            : {width: 0, height: 0};
+        this.coverIntrinsicWidth = fallback.width;
+        this.coverIntrinsicHeight = fallback.height;
+        if (!safeSrc || typeof Image === 'undefined')
+            return;
+
+        const measured = await new Promise((resolve) => {
+            const image = new Image();
+            let settled = false;
+            let timer = null;
+            const cleanup = () => {
+                clearTimeout(timer);
+                image.removeEventListener('load', onLoad);
+                image.removeEventListener('error', onError);
+            };
+            const finish = (size) => {
+                if (settled)
+                    return;
+                settled = true;
+                cleanup();
+                resolve(size);
+            };
+            const onLoad = () => {
+                const width = Math.round(Number(image.naturalWidth || 0) || 0);
+                const height = Math.round(Number(image.naturalHeight || 0) || 0);
+                finish(width > 0 && height > 0 ? {width, height} : fallback);
+            };
+            const onError = () => finish(fallback);
+
+            image.addEventListener('load', onLoad);
+            image.addEventListener('error', onError);
+            timer = setTimeout(() => finish(fallback), 3000);
+            image.src = safeSrc;
+            if (image.complete)
+                queueMicrotask(image.naturalWidth > 0 ? onLoad : onError);
+        });
+
+        if (
+            requestId !== this.coverIntrinsicLoadId
+            || safeSrc !== String(this.coverSrc || '').trim()
+        )
+            return;
+
+        this.coverIntrinsicWidth = measured.width;
+        this.coverIntrinsicHeight = measured.height;
     }
 
     scheduleBottomClipCalibrationRetry(delayMs = 220) {
@@ -7132,8 +7271,15 @@ class Reader {
             });
         };
 
-        if (this.coverSrc)
-            pushUnit(`<div class="reader-cover-box"><img src="${this.coverSrc}" class="reader-cover" alt="${this.escapeHtml(this.title)}"></div>`);
+        if (this.coverSrc) {
+            const dimensions = (this.coverIntrinsicWidth > 0 && this.coverIntrinsicHeight > 0)
+                ? ` width="${this.coverIntrinsicWidth}" height="${this.coverIntrinsicHeight}"`
+                : '';
+            const aspectStyle = (this.coverIntrinsicWidth > 0 && this.coverIntrinsicHeight > 0)
+                ? ` style="--reader-cover-aspect: ${this.coverIntrinsicWidth} / ${this.coverIntrinsicHeight}"`
+                : '';
+            pushUnit(`<div class="reader-cover-box"><img src="${this.escapeHtml(this.coverSrc)}" class="reader-cover"${dimensions}${aspectStyle} alt="${this.escapeHtml(this.title)}"></div>`);
+        }
         if (this.seriesLine)
             pushUnit(`<div class="reader-series">${this.escapeHtml(this.seriesLine)}</div>`);
         if (this.title)
@@ -7969,13 +8115,16 @@ class Reader {
         this.title = this.decodeReaderText(book.title || (fb2Info.titleInfo && fb2Info.titleInfo.bookTitle) || 'Без названия');
         this.authorLine = this.decodeReaderText(book.author || authorFallback);
         this.seriesLine = this.decodeReaderText(book.series ? `${book.series}${book.serno ? ` #${book.serno}` : ''}` : '');
+        if (stateResponse && stateResponse.preferences)
+            this.applyReaderPreferences(stateResponse.preferences || {}, {persistLocal: true});
         this.coverSrc = cover || '';
+        const coverSizePromise = this.loadCoverIntrinsicSize(this.coverSrc);
+        if (this.isPagedMode)
+            await coverSizePromise;
         this.contents = this.sanitizeContents(contents || []);
         this.readerHtml = this.buildReaderHtml(parser);
         this.readerSearchText = this.normalizeReaderSearchText(this.stripHtml(this.readerHtml || '')).toLowerCase();
 
-        if (stateResponse && stateResponse.preferences)
-            this.applyReaderPreferences(stateResponse.preferences || {}, {persistLocal: true});
         const stateProgress = Object.assign({percent: 0, sectionId: '', pageIndex: 0, textOffset: -1, textSnippet: '', updatedAt: ''}, (stateResponse && stateResponse.progress) || {});
         const serverProgress = this.normalizeReaderProgress(stateProgress);
         let restoredProgress = this.hasReaderProgressPlace(stateProgress)
@@ -8461,7 +8610,8 @@ class Reader {
         const relX = (event.clientX - rect.left) / rect.width;
         const relY = (event.clientY - rect.top) / rect.height;
         if (this.isPagedMode) {
-            if (this.isHorizontalPaged) {
+            const useHorizontalTapZones = this.isCompactLayout || this.isHorizontalPaged;
+            if (useHorizontalTapZones) {
                 if (relX <= 0.22) {
                     consumeCompactTap();
                     this.goToRelativePage(-1);
@@ -8618,8 +8768,8 @@ class Reader {
         const touchDurationMs = Math.max(0, Date.now() - (Number(this.touchStartPoint.startedAt || 0) || Date.now()));
         this.touchStartPoint = null;
 
-        const tapThreshold = 12;
         const swipeThreshold = 36;
+        const tapThreshold = (this.isCompactLayout && this.isPagedMode ? swipeThreshold : 12);
         const absX = Math.abs(deltaX);
         const absY = Math.abs(deltaY);
         if (absX < tapThreshold && absY < tapThreshold) {
@@ -10204,6 +10354,25 @@ export default vueComponent(Reader);
     min-height: 30px;
 }
 
+.reader-reset-control {
+    display: grid;
+    gap: 6px;
+}
+
+.reader-reset-control :deep(.q-btn) {
+    min-height: 34px;
+    border: 1px solid var(--reader-border);
+    border-radius: 12px;
+    background: var(--reader-surface-2);
+    color: var(--reader-text);
+}
+
+.reader-control-hint {
+    color: var(--reader-muted);
+    font-size: 11px;
+    line-height: 1.35;
+}
+
 .reader-profile-chip {
     display: inline-flex;
     align-items: center;
@@ -10661,6 +10830,15 @@ export default vueComponent(Reader);
     align-items: flex-start;
 }
 
+.reader-home-state--locked {
+    flex-wrap: wrap;
+}
+
+.reader-home-state--locked > div {
+    flex: 1 1 220px;
+    min-width: 0;
+}
+
 .reader-home-empty-title {
     color: var(--reader-text);
     font-weight: 800;
@@ -10837,13 +11015,15 @@ export default vueComponent(Reader);
     box-sizing: border-box;
 }
 
-.reader-cover-box {
+.reader-cover-box,
+.reader-html :deep(.reader-cover-box) {
     display: flex;
     justify-content: center;
     margin-bottom: 24px;
 }
 
-.reader-cover {
+.reader-cover,
+.reader-html :deep(.reader-cover) {
     width: 180px;
     max-width: 42vw;
     border-radius: 14px;
@@ -11203,29 +11383,42 @@ export default vueComponent(Reader);
 .reader-body--paged .reader-heading,
 .reader-body--paged .reader-subheading,
 .reader-body--paged .reader-image-block,
-.reader-body--paged .reader-cover-box {
+.reader-body--paged .reader-cover-box,
+.reader-body--paged .reader-html :deep(.reader-section),
+.reader-body--paged .reader-html :deep(.reader-notes),
+.reader-body--paged .reader-html :deep(.reader-progress-bar),
+.reader-body--paged .reader-html :deep(.reader-contents-inline),
+.reader-body--paged .reader-html :deep(.reader-series),
+.reader-body--paged .reader-html :deep(.reader-heading),
+.reader-body--paged .reader-html :deep(.reader-subheading),
+.reader-body--paged .reader-html :deep(.reader-image-block),
+.reader-body--paged .reader-html :deep(.reader-cover-box) {
     break-inside: avoid;
 }
 
-.reader-series {
+.reader-series,
+.reader-html :deep(.reader-series) {
     color: var(--reader-muted);
     font-size: 0.92em;
     font-weight: 650;
 }
 
-.reader-heading {
+.reader-heading,
+.reader-html :deep(.reader-heading) {
     margin: 10px 0 0;
     font-size: clamp(28px, 4vw, 40px);
     line-height: 1.06;
 }
 
-.reader-subheading {
+.reader-subheading,
+.reader-html :deep(.reader-subheading) {
     margin-top: 10px;
     color: var(--reader-muted);
     font-size: 0.98em;
 }
 
-.reader-opening-title {
+.reader-opening-title,
+.reader-html :deep(.reader-opening-title) {
     margin: 0 0 18px;
     font-size: 1.22em;
     font-weight: 700;
@@ -11412,10 +11605,12 @@ export default vueComponent(Reader);
     box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
 }
 
-.reader-body--paged .reader-cover {
-    width: auto;
+.reader-body--paged .reader-cover,
+.reader-body--paged .reader-html :deep(.reader-cover) {
+    width: 180px;
     max-width: min(100%, 320px);
     max-height: var(--reader-page-media-max-height);
+    aspect-ratio: var(--reader-cover-aspect, auto);
     object-fit: contain;
 }
 
@@ -12415,9 +12610,20 @@ export default vueComponent(Reader);
         padding-inline: 0;
     }
 
-    .reader-cover {
+    .reader-cover,
+    .reader-html :deep(.reader-cover),
+    .reader-body--paged .reader-cover,
+    .reader-body--paged .reader-html :deep(.reader-cover) {
         width: 140px;
         max-width: 46vw;
+    }
+
+    .reader-debug-panel {
+        top: calc(env(safe-area-inset-top, 0px) + 82px);
+        right: 8px;
+        bottom: auto;
+        max-height: min(48dvh, 360px);
+        overflow-y: auto;
     }
 
     .reader-body {

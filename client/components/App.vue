@@ -349,7 +349,7 @@ body.body--dark .root {
     color: var(--app-text);
 }
 
-body.body--dark .bg-white,
+body.body--dark .bg-white:not(.std-dialog-card--reader),
 body.body--dark .bg-yellow-1 {
     background: var(--app-surface) !important;
     color: var(--app-text) !important;
@@ -450,7 +450,7 @@ body.body--dark .q-btn-toggle .q-btn.bg-primary {
     color: #071b1a !important;
 }
 
-body.body--dark .q-dialog__inner > div {
+body.body--dark .q-dialog__inner > div:not(.std-dialog-card--reader) {
     background: var(--app-surface) !important;
     color: var(--app-text) !important;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
@@ -486,6 +486,26 @@ body.body--dark .q-field--outlined .q-field__control:hover::before {
 
 body.body--dark .q-field--focused .q-field__control::after {
     border-color: var(--app-primary);
+}
+
+body.body--dark .std-dialog-card--reader .q-field__control,
+body.body--dark .std-dialog-card--reader .q-field__native,
+body.body--dark .std-dialog-card--reader .q-field__label,
+body.body--dark .std-dialog-card--reader .q-field__append,
+body.body--dark .std-dialog-card--reader .q-icon {
+    color: var(--reader-text) !important;
+}
+
+body.body--dark .std-dialog-card--reader .q-field--outlined .q-field__control {
+    background: var(--reader-surface-2) !important;
+}
+
+body.body--dark .std-dialog-card--reader .q-field--outlined .q-field__control::before {
+    border-color: var(--reader-border) !important;
+}
+
+body.body--dark .std-dialog-card--reader .q-field--focused .q-field__control::after {
+    border-color: var(--reader-accent) !important;
 }
 
 body.body--dark pre {

@@ -124,6 +124,78 @@ async function withStaticServer(config, fn) {
     }
 }
 
+async function testAppCacheRecoveryBootstrapAndRoute() {
+    const mainSource = await fs.readFile(path.resolve(__dirname, '../client/main.js'), 'utf8');
+    const bootstrapStart = mainSource.indexOf('async function bootstrapApplication()');
+    const bootstrapEnd = mainSource.indexOf('\n}\n\nbootstrapApplication()', bootstrapStart);
+    assert.ok(bootstrapStart >= 0 && bootstrapEnd > bootstrapStart);
+    const bootstrapSource = mainSource.slice(bootstrapStart, bootstrapEnd);
+    const resetIndex = bootstrapSource.indexOf('await handleRequestedCacheReset()');
+    const buildIndex = bootstrapSource.indexOf('await ensureCurrentAppBuild()');
+    const mountIndex = bootstrapSource.indexOf('mountApplication()');
+    assert.ok(resetIndex >= 0 && resetIndex < buildIndex);
+    assert.ok(buildIndex < mountIndex);
+    assert.match(mainSource, /Promise\.allSettled\(\[\s*clearKnownAppCaches\(\),\s*unregisterScopedServiceWorkers\(\)/);
+    assert.match(mainSource, /const appReloadMaxAttempts = 3;/);
+    assert.doesNotMatch(mainSource, /searchParams\.get\('appBuild'\) === deployedBuildId/);
+
+    await withTempDir(async(dir) => {
+        const publicDir = path.join(dir, 'public');
+        const bookDir = path.join(dir, 'book');
+        await fs.ensureDir(publicDir);
+        await fs.ensureDir(bookDir);
+
+        await withStaticServer({
+            rootPathStatic: '/shelf',
+            bookPathStatic: '/shelf/book',
+            bookDir,
+            publicFilesDir: path.join(dir, 'public-files'),
+            publicDir,
+            tempDir: path.join(dir, 'tmp'),
+            libDir: dir,
+            librarySources: [],
+        }, async(server) => {
+            const response = await request(
+                server,
+                '/shelf/app-reset?return=https%3A%2F%2Fevil.example%2F%3Cscript%3E'
+            );
+            assert.strictEqual(response.status, 200);
+            assert.match(response.headers['cache-control'] || '', /no-store/);
+            assert.strictEqual(response.headers.pragma, 'no-cache');
+            assert.match(response.headers['content-type'] || '', /text\/html/);
+
+            const body = response.body.toString('utf8');
+            assert.match(body, /const BASE_PATH = "\/shelf\/";/);
+            assert.match(body, /Promise\.allSettled/);
+            assert.match(body, /key\.startsWith\('inpx-web-'\)/);
+            assert.match(body, /registration\.scope === currentScope/);
+            assert.match(body, /target\.origin !== window\.location\.origin/);
+            assert.match(body, /Настройки читалки, прогресс и закладки сохраняются/);
+            assert.doesNotMatch(body, /evil\.example|<script><\/script>/);
+            assert.doesNotMatch(body, /localStorage|sessionStorage\.clear|inpx\.reader\./);
+
+            const outsideBase = await request(server, '/app-reset');
+            assert.strictEqual(outsideBase.status, 404);
+        });
+
+        await withStaticServer({
+            rootPathStatic: '/',
+            bookPathStatic: '/book',
+            bookDir,
+            publicFilesDir: path.join(dir, 'root-public-files'),
+            publicDir,
+            tempDir: path.join(dir, 'root-tmp'),
+            libDir: dir,
+            librarySources: [],
+        }, async(server) => {
+            const response = await request(server, '/app-reset');
+            assert.strictEqual(response.status, 200);
+            assert.match(response.headers['cache-control'] || '', /no-store/);
+            assert.match(response.body.toString('utf8'), /const BASE_PATH = "\/";/);
+        });
+    });
+}
+
 async function testAdminSettingsRestoreKeepsSecrets() {
     const worker = makeWorker({
         opds: {
@@ -578,6 +650,7 @@ async function testDiscoveryNewestAvoidsUnboundedFallback() {
 }
 
 const tests = [
+    testAppCacheRecoveryBootstrapAndRoute,
     testTitleSearchKeepsIndexedPrefixFallbacks,
     testConvertedBookFileNames,
     testAdminSettingsRestoreKeepsSecrets,

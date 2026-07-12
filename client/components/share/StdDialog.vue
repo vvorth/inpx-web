@@ -19,7 +19,7 @@
                     <div v-html="caption"></div>
                 </div>
                 <div class="close-icon column justify-center items-center">
-                    <q-btn v-close-popup flat round dense>
+                    <q-btn v-close-popup flat round dense aria-label="Закрыть">
                         <q-icon name="la la-times" size="18px"></q-icon>
                     </q-btn>
                 </div>
@@ -44,7 +44,7 @@
                     <div v-html="caption"></div>
                 </div>
                 <div class="close-icon column justify-center items-center">
-                    <q-btn v-close-popup flat round dense>
+                    <q-btn v-close-popup flat round dense aria-label="Закрыть">
                         <q-icon name="la la-times" size="18px"></q-icon>
                     </q-btn>
                 </div>
@@ -72,7 +72,7 @@
                     <div v-html="caption"></div>
                 </div>
                 <div v-if="!noCancel" class="close-icon column justify-center items-center">
-                    <q-btn v-close-popup flat round dense>
+                    <q-btn v-close-popup flat round dense aria-label="Закрыть">
                         <q-icon name="la la-times" size="18px"></q-icon>
                     </q-btn>
                 </div>
@@ -104,7 +104,7 @@
                     <div v-html="caption"></div>
                 </div>
                 <div v-if="!noCancel" class="close-icon column justify-center items-center">
-                    <q-btn v-close-popup flat round dense>
+                    <q-btn v-close-popup flat round dense aria-label="Закрыть">
                         <q-icon name="la la-times" size="18px"></q-icon>
                     </q-btn>
                 </div>
@@ -123,14 +123,18 @@
                     dense
                 >
                     <template #append>
-                        <q-icon
-                            :name="passwordVisible ? 'la la-eye-slash' : 'la la-eye'"
+                        <q-btn
+                            flat
+                            round
+                            dense
+                            :icon="passwordVisible ? 'la la-eye-slash' : 'la la-eye'"
+                            :aria-label="passwordVisible ? 'Скрыть пароль' : 'Показать пароль'"
                             class="password-visibility-toggle"
                             @click="passwordVisible = !passwordVisible"
                         />
                     </template>
                 </q-input>
-                <div class="error">
+                <div class="error" role="status" aria-live="polite">
                     <span v-show="error != ''">{{ error }}</span>
                 </div>
             </div>
@@ -153,7 +157,7 @@
                     <div v-html="caption"></div>
                 </div>
                 <div v-if="!noCancel" class="close-icon column justify-center items-center">
-                    <q-btn v-close-popup flat round dense>
+                    <q-btn v-close-popup flat round dense aria-label="Закрыть">
                         <q-icon name="la la-times" size="18px"></q-icon>
                     </q-btn>
                 </div>
@@ -181,14 +185,18 @@
                     dense
                 >
                     <template #append>
-                        <q-icon
-                            :name="passwordVisible ? 'la la-eye-slash' : 'la la-eye'"
+                        <q-btn
+                            flat
+                            round
+                            dense
+                            :icon="passwordVisible ? 'la la-eye-slash' : 'la la-eye'"
+                            :aria-label="passwordVisible ? 'Скрыть пароль' : 'Показать пароль'"
                             class="password-visibility-toggle"
                             @click="passwordVisible = !passwordVisible"
                         />
                     </template>
                 </q-input>
-                <div class="error">
+                <div class="error" role="status" aria-live="polite">
                     <span v-show="error != ''">{{ error }}</span>
                 </div>
             </div>
@@ -197,7 +205,7 @@
                 <q-btn v-if="!noCancel" v-close-popup class="q-px-md q-ml-sm" dense no-caps>
                     Отмена
                 </q-btn>
-                <q-btn class="q-px-md q-ml-sm" color="primary" dense no-caps @click="okClick">
+                <q-btn :disable="!profileLoginReady" class="q-px-md q-ml-sm" color="primary" dense no-caps @click="okClick">
                     OK
                 </q-btn>
             </div>
@@ -211,7 +219,7 @@
                     <div v-html="caption"></div>
                 </div>
                 <div class="close-icon column justify-center items-center">
-                    <q-btn v-close-popup flat round dense>
+                    <q-btn v-close-popup flat round dense aria-label="Закрыть">
                         <q-icon name="la la-times" size="18px"></q-icon>
                     </q-btn>
                 </div>
@@ -286,6 +294,10 @@ class StdDialog {
         return this.dialogStyle || null;
     }
 
+    get profileLoginReady() {
+        return !!(String(this.inputValue || '').trim() && String(this.profilePasswordValue || ''));
+    }
+
     get isCompactLayout() {
         return !!(this.$q && this.$q.screen && this.$q.screen.lt && this.$q.screen.lt.md);
     }
@@ -353,7 +365,11 @@ class StdDialog {
             this.$refs.input.focus();
         } else if (this.type == 'profileLogin') {
             this.enableValidator = true;
-            this.$refs.profileLoginInput.focus();
+            const target = String(this.inputValue || '').trim()
+                ? this.$refs.profilePasswordInput
+                : this.$refs.profileLoginInput;
+            if (target && typeof target.focus === 'function')
+                target.focus();
         }
         this.showed = true;
     }
@@ -579,7 +595,7 @@ export default vueComponent(StdDialog);
     border: 1px solid var(--reader-border);
     border-radius: 12px;
     background: var(--reader-surface) !important;
-    color: var(--reader-text);
+    color: var(--reader-text) !important;
     box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
 }
 
