@@ -129,6 +129,12 @@ async function testFb2ContentsExcludeNotesBodies() {
     const parser = new Fb2Parser();
     parser.fromString(`
         <FictionBook>
+            <description>
+                <title-info>
+                    <book-title>Annotation fixture</book-title>
+                    <annotation><p>Separate annotation</p><p><strong>Formatted text</strong></p></annotation>
+                </title-info>
+            </description>
             <body>
                 <section><title><p>От автора</p></title></section>
                 <section>
@@ -143,12 +149,101 @@ async function testFb2ContentsExcludeNotesBodies() {
         </FictionBook>
     `, {lowerCase: true});
 
+    const annotation = parser.bookInfo().titleInfo.annotation;
+    assert.ok(Array.isArray(annotation));
+    assert.strictEqual(annotation.length, 2);
+    assert.strictEqual(annotation[0][1], 'p');
+
     const contents = makeWorker().extractFb2Contents(parser);
     assert.deepStrictEqual(contents, [
         {title: 'От автора', level: 0},
         {title: '1', level: 0},
         {title: 'Вложенная глава', level: 1},
     ]);
+}
+
+async function testReaderAnnotationStaysOutsideReadingFlow() {
+    const readerSource = await fs.readFile(path.resolve(__dirname, '../client/components/Reader/Reader.vue'), 'utf8');
+    const annotationBuilderStart = readerSource.indexOf('    buildReaderAnnotationHtml(parser, annotationNodes = []) {');
+    const readerBuilderStart = readerSource.indexOf('    buildReaderHtml(parser) {', annotationBuilderStart);
+    const readerBuilderEnd = readerSource.indexOf('    createFb2Parser(source = \'\') {', readerBuilderStart);
+
+    assert.ok(annotationBuilderStart >= 0 && readerBuilderStart > annotationBuilderStart);
+    assert.ok(readerBuilderEnd > readerBuilderStart);
+    const annotationBuilder = readerSource.slice(annotationBuilderStart, readerBuilderStart);
+    const readerBuilder = readerSource.slice(readerBuilderStart, readerBuilderEnd);
+    assert.match(annotationBuilder, /this\.renderBlockNodes\(annotationNodes/);
+    assert.doesNotMatch(annotationBuilder, /annotationHtml|v-html|innerHTML/);
+    assert.doesNotMatch(readerBuilder, /annotation/i);
+    assert.match(readerSource, /this\.readerAnnotationHtml = this\.buildReaderAnnotationHtml\(/);
+    assert.match(readerSource, /this\.readerSearchText = this\.normalizeReaderSearchText\(this\.stripHtml\(this\.readerHtml \|\| ''\)\)\.toLowerCase\(\);/);
+    assert.match(readerSource, /get hasContentsMenu\(\)[\s\S]{0,160}this\.hasContents \|\| this\.hasAnnotation/);
+    assert.match(readerSource, /v-if="hasContentsMenu"/);
+    assert.match(readerSource, /contentsPanelView === 'annotation'/);
+    assert.match(readerSource, /this\.findPagedPageIndexByAnchor\(targetId\)/);
+    assert.match(readerSource, /this\.readerHtmlHasAnchor\(targetId\)/);
+    assert.match(readerSource, /\.filter\(\(img\) => !img\.closest\('\.reader-annotation-html'\)\)/);
+    assert.match(readerSource, /\.filter\(\(link\) => !link\.closest\('\.reader-annotation-html'\)\)/);
+    assert.strictEqual((readerSource.match(/src="\$\{this\.escapeHtml\(src\)\}"/g) || []).length, 2);
+
+    const handlerStart = readerSource.indexOf('    handleReaderAnnotationClick(event) {');
+    const handlerEnd = readerSource.indexOf('    captureReaderNoteReturnPoint() {', handlerStart);
+    assert.ok(handlerStart >= 0 && handlerEnd > handlerStart);
+    const handlerMethod = readerSource.slice(handlerStart, handlerEnd).trim();
+    const AnnotationHandler = new Function(`return class AnnotationHandler {${handlerMethod}}`)();
+    const makeHandler = ({pageIndex = -1, readerHtmlHasAnchor = false, annotationTarget = null} = {}) => {
+        const handler = new AnnotationHandler();
+        const jumps = [];
+        const link = {};
+        const root = {
+            contains: item => item === link,
+            querySelector: () => annotationTarget,
+        };
+        const event = {
+            currentTarget: root,
+            target: {closest: () => link},
+            prevented: false,
+            stopped: false,
+            preventDefault() { this.prevented = true; },
+            stopPropagation() { this.stopped = true; },
+        };
+        handler.$refs = {scroller: {querySelector: () => null}};
+        handler.isPagedMode = true;
+        handler.getReaderLinkTarget = () => 'chapter-2';
+        handler.escapeCssId = value => value;
+        handler.findPagedPageIndexByAnchor = () => pageIndex;
+        handler.readerHtmlHasAnchor = () => readerHtmlHasAnchor;
+        handler.captureReaderNoteReturnPoint = () => ({pageIndex: 0});
+        handler.jumpToReaderAnchor = (id, options) => jumps.push({id, options});
+        return {event, handler, jumps};
+    };
+
+    const offPage = makeHandler({pageIndex: 4});
+    offPage.handler.handleReaderAnnotationClick(offPage.event);
+    assert.strictEqual(offPage.event.prevented, true);
+    assert.strictEqual(offPage.event.stopped, true);
+    assert.deepStrictEqual(offPage.jumps, [{id: 'chapter-2', options: {returnPoint: {pageIndex: 0}}}]);
+
+    let localScrolls = 0;
+    const localTarget = {scrollIntoView: () => { localScrolls += 1; }};
+    const localAnchor = makeHandler({annotationTarget: localTarget});
+    localAnchor.handler.handleReaderAnnotationClick(localAnchor.event);
+    assert.strictEqual(localAnchor.jumps.length, 0);
+    assert.strictEqual(localScrolls, 1);
+}
+
+async function testReaderImageDataUrlsAreValidated() {
+    const readerContent = require('../server/core/fb2/ReaderContent');
+    assert.strictEqual(
+        readerContent.createReaderImageDataUrl('image/png', ' iVBORw0KGgo=\n'),
+        'data:image/png;base64,iVBORw0KGgo='
+    );
+    assert.strictEqual(readerContent.createReaderImageDataUrl('image/png', 'AQI'), 'data:image/png;base64,AQI');
+    assert.strictEqual(readerContent.createReaderImageDataUrl('image/svg+xml', 'AAAA'), '');
+    assert.strictEqual(readerContent.createReaderImageDataUrl('image/png\" onerror=\"alert(1)', 'AAAA'), '');
+    assert.strictEqual(readerContent.createReaderImageDataUrl('image/png', 'AAAA\" onerror=\"alert(1)'), '');
+    assert.strictEqual(readerContent.createReaderImageDataUrl('image/png', 'A'), '');
+    assert.strictEqual(readerContent.createReaderImageDataUrl('image/png', 'AAAA==='), '');
 }
 
 async function testAppCacheRecoveryBootstrapAndRoute() {
@@ -817,6 +912,8 @@ const tests = [
     testAppCacheRecoveryBootstrapAndRoute,
     testTitleSearchKeepsIndexedPrefixFallbacks,
     testFb2ContentsExcludeNotesBodies,
+    testReaderAnnotationStaysOutsideReadingFlow,
+    testReaderImageDataUrlsAreValidated,
     testConvertedBookFileNames,
     testAdminSettingsRestoreKeepsSecrets,
     testAdminBackupArchiveAndDownload,

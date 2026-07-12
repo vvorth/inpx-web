@@ -70,7 +70,7 @@
                         @click="jumpToAdjacentSection(-1)"
                     />
                     <q-btn
-                        v-if="hasContents"
+                        v-if="hasContentsMenu"
                         flat
                         dense
                         round
@@ -984,7 +984,7 @@
             <div
                 v-if="!compactChromeHidden && !controlsOpen"
                 class="reader-mobile-bar"
-                :class="{'reader-mobile-bar--with-contents': hasContents}"
+                :class="{'reader-mobile-bar--with-contents': hasContentsMenu}"
             >
                 <q-btn
                     flat
@@ -996,7 +996,7 @@
                     @click="openPlacesDialog(defaultPlacesTab)"
                 />
                 <q-btn
-                    v-if="hasContents"
+                    v-if="hasContentsMenu"
                     flat
                     no-caps
                     stack
@@ -1064,20 +1064,53 @@
 
         <div v-if="fullscreenActive && contentsDialogOpen" class="reader-overlay-panel std-dialog-card--reader" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
             <div class="reader-dialog-header">
-                <div class="reader-dialog-title">{{ uiText.contents }}</div>
-                <q-btn flat dense round icon="la la-times" @click="contentsDialogOpen = false" />
+                <div class="reader-dialog-heading">
+                    <q-btn
+                        v-if="contentsPanelView === 'annotation'"
+                        flat
+                        dense
+                        round
+                        icon="la la-arrow-left"
+                        :aria-label="uiText.backToContents"
+                        @click="showContentsList"
+                    />
+                    <div class="reader-dialog-title">
+                        {{ contentsPanelView === 'annotation' ? uiText.annotation : uiText.contents }}
+                    </div>
+                </div>
+                <q-btn flat dense round icon="la la-times" @click="closeContentsDialog" />
             </div>
 
-            <div class="reader-dialog-body">
-                <button
-                    v-for="item in displayContents"
-                    :key="item.id"
-                    class="reader-dialog-link"
-                    :class="{'is-active': item.id === currentSectionId}"
-                    @click="jumpToContent(item.id)"
-                >
-                    {{ item.title }}
-                </button>
+            <div class="reader-dialog-body" :class="{'reader-dialog-body--annotation': contentsPanelView === 'annotation'}">
+                <div
+                    v-if="contentsPanelView === 'annotation'"
+                    class="reader-html reader-annotation-html"
+                    :style="readerAnnotationStyle"
+                    @click="handleReaderAnnotationClick"
+                    v-html="readerAnnotationHtml"
+                ></div>
+                <template v-else>
+                    <button
+                        v-if="hasAnnotation"
+                        type="button"
+                        class="reader-dialog-link reader-dialog-link--annotation"
+                        @click="showReaderAnnotation"
+                    >
+                        <q-icon name="la la-info-circle" />
+                        <span>{{ uiText.annotation }}</span>
+                        <q-icon name="la la-angle-right" />
+                    </button>
+                    <div v-if="hasAnnotation && displayContents.length" class="reader-dialog-separator" role="separator"></div>
+                    <button
+                        v-for="item in displayContents"
+                        :key="item.id"
+                        class="reader-dialog-link"
+                        :class="{'is-active': item.id === currentSectionId}"
+                        @click="jumpToContent(item.id)"
+                    >
+                        {{ item.title }}
+                    </button>
+                </template>
             </div>
         </div>
 
@@ -1240,20 +1273,53 @@
         <q-dialog v-if="!fullscreenActive" v-model="contentsDialogOpen" position="right">
             <div class="reader-dialog reader-dialog--contents std-dialog-card--reader" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
                 <div class="reader-dialog-header">
-                    <div class="reader-dialog-title">{{ uiText.contents }}</div>
-                    <q-btn flat dense round icon="la la-times" @click="contentsDialogOpen = false" />
+                    <div class="reader-dialog-heading">
+                        <q-btn
+                            v-if="contentsPanelView === 'annotation'"
+                            flat
+                            dense
+                            round
+                            icon="la la-arrow-left"
+                            :aria-label="uiText.backToContents"
+                            @click="showContentsList"
+                        />
+                        <div class="reader-dialog-title">
+                            {{ contentsPanelView === 'annotation' ? uiText.annotation : uiText.contents }}
+                        </div>
+                    </div>
+                    <q-btn flat dense round icon="la la-times" @click="closeContentsDialog" />
                 </div>
 
-                <div class="reader-dialog-body">
-                    <button
-                        v-for="item in displayContents"
-                        :key="item.id"
-                        class="reader-dialog-link"
-                        :class="{'is-active': item.id === currentSectionId}"
-                        @click="jumpToContent(item.id)"
-                    >
-                        {{ item.title }}
-                    </button>
+                <div class="reader-dialog-body" :class="{'reader-dialog-body--annotation': contentsPanelView === 'annotation'}">
+                    <div
+                        v-if="contentsPanelView === 'annotation'"
+                        class="reader-html reader-annotation-html"
+                        :style="readerAnnotationStyle"
+                        @click="handleReaderAnnotationClick"
+                        v-html="readerAnnotationHtml"
+                    ></div>
+                    <template v-else>
+                        <button
+                            v-if="hasAnnotation"
+                            type="button"
+                            class="reader-dialog-link reader-dialog-link--annotation"
+                            @click="showReaderAnnotation"
+                        >
+                            <q-icon name="la la-info-circle" />
+                            <span>{{ uiText.annotation }}</span>
+                            <q-icon name="la la-angle-right" />
+                        </button>
+                        <div v-if="hasAnnotation && displayContents.length" class="reader-dialog-separator" role="separator"></div>
+                        <button
+                            v-for="item in displayContents"
+                            :key="item.id"
+                            class="reader-dialog-link"
+                            :class="{'is-active': item.id === currentSectionId}"
+                            @click="jumpToContent(item.id)"
+                        >
+                            {{ item.title }}
+                        </button>
+                    </template>
                 </div>
             </div>
         </q-dialog>
@@ -1451,6 +1517,7 @@
 <script>
 import vueComponent from '../vueComponent.js';
 import Fb2Parser from '../../../server/core/fb2/Fb2Parser';
+import readerContent from '../../../server/core/fb2/ReaderContent';
 import _ from 'lodash';
 import he from 'he';
 
@@ -1523,11 +1590,13 @@ class Reader {
     coverIntrinsicHeight = 0;
     coverIntrinsicLoadId = 0;
     readerHtml = '';
+    readerAnnotationHtml = '';
     readerSearchText = '';
     pagedPages = [];
     currentPageIndex = 0;
     controlsOpen = false;
     contentsDialogOpen = false;
+    contentsPanelView = 'contents';
     bookmarksDialogOpen = false;
     helpDialogOpen = false;
     searchDialogOpen = false;
@@ -2349,6 +2418,14 @@ class Reader {
         });
     }
 
+    get readerAnnotationStyle() {
+        return {
+            fontFamily: this.readerFontFamilyCss,
+            fontSize: `${this.activePreferences.fontSize}px`,
+            lineHeight: String(this.activePreferences.lineHeight),
+        };
+    }
+
     get readerNotifyOptions() {
         return {
             color: 'white',
@@ -2569,6 +2646,8 @@ class Reader {
             restoringPage: '\u0412\u043e\u0441\u0441\u0442\u0430\u043d\u0430\u0432\u043b\u0438\u0432\u0430\u044e \u043c\u0435\u0441\u0442\u043e \u0447\u0442\u0435\u043d\u0438\u044f...',
             refreshingPagesCompact: '\u041f\u0435\u0440\u0435\u0441\u0442\u0440\u0430\u0438\u0432\u0430\u044e \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u044b...',
             contents: '\u0421\u043e\u0434\u0435\u0440\u0436\u0430\u043d\u0438\u0435',
+            annotation: '\u0410\u043d\u043d\u043e\u0442\u0430\u0446\u0438\u044f',
+            backToContents: '\u041d\u0430\u0437\u0430\u0434 \u043a \u0441\u043e\u0434\u0435\u0440\u0436\u0430\u043d\u0438\u044e',
             show: '\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c',
             hide: '\u0421\u043a\u0440\u044b\u0442\u044c',
             settings: '\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438',
@@ -3371,6 +3450,14 @@ class Reader {
         return this.displayContents.length > 0;
     }
 
+    get hasAnnotation() {
+        return !!String(this.readerAnnotationHtml || '').trim();
+    }
+
+    get hasContentsMenu() {
+        return this.hasContents || this.hasAnnotation;
+    }
+
     get hasBookmarks() {
         return this.bookmarks.length > 0;
     }
@@ -3479,7 +3566,23 @@ class Reader {
     }
 
     toggleContentsDialog() {
-        this.contentsDialogOpen = !this.contentsDialogOpen;
+        const nextOpen = !this.contentsDialogOpen;
+        this.contentsPanelView = 'contents';
+        this.contentsDialogOpen = nextOpen;
+    }
+
+    showReaderAnnotation() {
+        if (this.hasAnnotation)
+            this.contentsPanelView = 'annotation';
+    }
+
+    showContentsList() {
+        this.contentsPanelView = 'contents';
+    }
+
+    closeContentsDialog() {
+        this.contentsDialogOpen = false;
+        this.contentsPanelView = 'contents';
     }
 
     toggleHelpDialog() {
@@ -3508,6 +3611,7 @@ class Reader {
             const hadOpenControls = this.controlsOpen;
             this.controlsOpen = false;
             this.contentsDialogOpen = false;
+            this.contentsPanelView = 'contents';
             this.helpDialogOpen = false;
             if (hadOpenControls)
                 this.applyPendingReaderSettingsReflow();
@@ -3575,6 +3679,7 @@ class Reader {
         this.loading = false;
         this.bookPreparing = false;
         this.readerHtml = '';
+        this.readerAnnotationHtml = '';
         this.readerSearchText = '';
         this.contents = [];
         this.bookmarks = [];
@@ -5046,7 +5151,8 @@ class Reader {
         if (typeof window === 'undefined' || !this.$refs || !this.$refs.page)
             return;
 
-        const images = Array.from(this.$refs.page.querySelectorAll('img'));
+        const images = Array.from(this.$refs.page.querySelectorAll('img'))
+            .filter((img) => !img.closest('.reader-annotation-html'));
         for (const img of images) {
             if (this.boundReaderImages.has(img))
                 continue;
@@ -5064,6 +5170,7 @@ class Reader {
         }
 
         const links = Array.from(this.$refs.page.querySelectorAll('a[href], .reader-note-link'))
+            .filter((link) => !link.closest('.reader-annotation-html'))
             .filter((link) => this.getReaderLinkTarget(link));
         for (const link of links) {
             if (this.boundReaderLinks.has(link))
@@ -8002,11 +8109,11 @@ class Reader {
             const attrs = (node.attrs() || {});
             const id = attrs.id;
             const contentType = this.normalizeBinaryType(attrs['content-type']);
-            const base64 = node.text();
-            if (!id || !base64 || !contentType.startsWith('image/'))
+            const src = readerContent.createReaderImageDataUrl(contentType, node.text());
+            if (!id || !src)
                 continue;
 
-            result.set(String(id), `data:${contentType};base64,${base64}`);
+            result.set(String(id), src);
         }
         return result;
     }
@@ -8090,7 +8197,7 @@ class Reader {
             } else if (name === 'image') {
                 const src = this.resolveImageSrc(attrs, imageMap);
                 if (src)
-                    parts.push(`<img src="${src}" class="reader-inline-image" alt="fb2-image">`);
+                    parts.push(`<img src="${this.escapeHtml(src)}" class="reader-inline-image" alt="fb2-image">`);
             } else if (name === 'empty-line') {
                 parts.push('<br>');
             } else {
@@ -8194,7 +8301,7 @@ class Reader {
             } else if (name === 'image') {
                 const src = this.resolveImageSrc(attrs, imageMap);
                 if (src)
-                    parts.push(`<div class="reader-image-block"><img src="${src}" class="reader-inline-image" alt="fb2-image"></div>`);
+                    parts.push(`<div class="reader-image-block"><img src="${this.escapeHtml(src)}" class="reader-inline-image" alt="fb2-image"></div>`);
             } else if (name === 'empty-line') {
                 parts.push('<div class="reader-empty-line"></div>');
             } else {
@@ -8205,6 +8312,18 @@ class Reader {
         }
 
         return parts.join('');
+    }
+
+    buildReaderAnnotationHtml(parser, annotationNodes = []) {
+        if (!Array.isArray(annotationNodes) || !annotationNodes.length)
+            return '';
+
+        return this.renderBlockNodes(annotationNodes, this.extractImageMap(parser), {
+            state: {sectionIndex: 0},
+            depth: 0,
+            inSection: false,
+            contentsAnchor: false,
+        }).trim();
     }
 
     buildReaderHtml(parser) {
@@ -8274,6 +8393,10 @@ class Reader {
         const coverSizePromise = this.loadCoverIntrinsicSize(this.coverSrc);
         if (this.isPagedMode)
             await coverSizePromise;
+        this.readerAnnotationHtml = this.buildReaderAnnotationHtml(
+            parser,
+            (fb2Info.titleInfo && fb2Info.titleInfo.annotation) || []
+        );
         this.contents = this.sanitizeContents(this.extractReaderContents(parser));
         this.readerHtml = this.buildReaderHtml(parser);
         this.readerSearchText = this.normalizeReaderSearchText(this.stripHtml(this.readerHtml || '')).toLowerCase();
@@ -8378,6 +8501,7 @@ class Reader {
         this.bookPreparing = false;
         this.error = '';
         this.readerHtml = '';
+        this.readerAnnotationHtml = '';
         this.readerSearchText = '';
         this.contents = [];
         this.bookmarks = [];
@@ -8388,6 +8512,7 @@ class Reader {
         this.pendingReflowAnchor = null;
         this.controlsOpen = false;
         this.contentsDialogOpen = false;
+        this.contentsPanelView = 'contents';
         this.bookmarksDialogOpen = false;
         this.helpDialogOpen = false;
         this.bookmarkComposerOpen = false;
@@ -8850,7 +8975,10 @@ class Reader {
             }
             if (this.contentsDialogOpen) {
                 event.preventDefault();
-                this.contentsDialogOpen = false;
+                if (this.contentsPanelView === 'annotation')
+                    this.showContentsList();
+                else
+                    this.closeContentsDialog();
                 return;
             }
             if (this.bookmarksDialogOpen) {
@@ -8979,7 +9107,7 @@ class Reader {
     }
 
     jumpToContent(id = '') {
-        this.contentsDialogOpen = false;
+        this.closeContentsDialog();
         this.chromeHidden = false;
         if (!id)
             return;
@@ -9003,6 +9131,47 @@ class Reader {
             const top = Math.max(0, target.offsetTop - 18);
             scroller.scrollTo({top, behavior: 'smooth'});
         });
+    }
+
+    readerHtmlHasAnchor(id = '') {
+        const safeId = String(id || '').trim();
+        if (!safeId || !this.readerHtml || typeof document === 'undefined')
+            return false;
+
+        const host = document.createElement('div');
+        host.innerHTML = this.readerHtml;
+        return !!host.querySelector(`#${this.escapeCssId(safeId)}`);
+    }
+
+    handleReaderAnnotationClick(event) {
+        const root = event && event.currentTarget;
+        const link = event && event.target && event.target.closest
+            ? event.target.closest('a[href], .reader-note-link')
+            : null;
+        if (!root || !link || !root.contains(link))
+            return;
+
+        const targetId = this.getReaderLinkTarget(link);
+        if (!targetId)
+            return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        const escapedId = this.escapeCssId(targetId);
+        const readerTarget = this.$refs && this.$refs.scroller
+            ? this.$refs.scroller.querySelector(`#${escapedId}`)
+            : null;
+        const readerPageIndex = this.isPagedMode ? this.findPagedPageIndexByAnchor(targetId) : -1;
+        if (readerTarget || readerPageIndex >= 0 || this.readerHtmlHasAnchor(targetId)) {
+            this.jumpToReaderAnchor(targetId, {
+                returnPoint: this.captureReaderNoteReturnPoint(),
+            });
+            return;
+        }
+
+        const annotationTarget = root.querySelector(`#${escapedId}`);
+        if (annotationTarget && typeof annotationTarget.scrollIntoView === 'function')
+            annotationTarget.scrollIntoView({behavior: 'smooth', block: 'start'});
     }
 
     captureReaderNoteReturnPoint() {
@@ -9065,7 +9234,7 @@ class Reader {
             return;
         }
 
-        this.contentsDialogOpen = false;
+        this.closeContentsDialog();
         this.chromeHidden = false;
         this.readerNoteReturnPoint = options.returnPoint || this.captureReaderNoteReturnPoint();
 
@@ -12160,9 +12329,20 @@ export default vueComponent(Reader);
     border-bottom: 1px solid var(--reader-border);
 }
 
+.reader-dialog-heading {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
 .reader-dialog-title {
+    min-width: 0;
     font-size: 18px;
     font-weight: 750;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .reader-dialog-body {
@@ -12182,6 +12362,48 @@ export default vueComponent(Reader);
     color: var(--reader-text);
     text-align: left;
     cursor: pointer;
+}
+
+.reader-dialog-link--annotation {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) 18px;
+    align-items: center;
+    gap: 10px;
+    border-color: color-mix(in srgb, var(--reader-accent) 34%, var(--reader-border));
+    background: var(--reader-accent-soft);
+    color: var(--reader-accent);
+    font-weight: 800;
+}
+
+.reader-dialog-link--annotation .q-icon:last-child {
+    justify-self: end;
+}
+
+.reader-dialog-separator {
+    height: 1px;
+    margin: 4px 2px;
+    background: var(--reader-border);
+}
+
+.reader-dialog-body--annotation {
+    gap: 0;
+}
+
+.reader-annotation-html {
+    min-width: 0;
+    padding: 0 4px 10px;
+    overflow-wrap: anywhere;
+    user-select: text;
+}
+
+.reader-annotation-html :deep(p:first-child),
+.reader-annotation-html :deep(blockquote:first-child) {
+    margin-top: 0;
+}
+
+.reader-annotation-html :deep(p:last-child),
+.reader-annotation-html :deep(blockquote:last-child) {
+    margin-bottom: 0;
 }
 
 .reader-dialog-link--bookmark {
