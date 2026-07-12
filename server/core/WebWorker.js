@@ -46,7 +46,7 @@ const checkReleaseInterval = 7*60*60*1000;//каждые 7 часов
 const discoveryCacheTtl = 15*60*1000;//15 minutes
 const externalDiscoveryCacheVersion = 'v4';
 const bookAssetVersion = 'fblibrary-assets-v2';
-const bookInfoVersion = 'fb2-binaries-v6';
+const bookInfoVersion = 'fb2-binaries-v7';
 
 function cleanDirInterval(config) {
     const minutes = parseFloat(config.cacheCleanInterval);
@@ -5435,8 +5435,14 @@ class WebWorker {
             }
         };
 
-        for (const body of parser.$$array('/body'))
+        for (const body of parser.$$array('/body')) {
+            const attrs = body.attrs() || {};
+            const bodyName = String(attrs.name || '').trim().toLowerCase();
+            if (bodyName === 'notes')
+                continue;
+
             walk(body.$$array('/section'));
+        }
 
         return result.slice(0, 200);
     }

@@ -124,6 +124,33 @@ async function withStaticServer(config, fn) {
     }
 }
 
+async function testFb2ContentsExcludeNotesBodies() {
+    const Fb2Parser = require('../server/core/fb2/Fb2Parser');
+    const parser = new Fb2Parser();
+    parser.fromString(`
+        <FictionBook>
+            <body>
+                <section><title><p>От автора</p></title></section>
+                <section>
+                    <title><p>1</p></title>
+                    <section><title><p>Вложенная глава</p></title></section>
+                </section>
+            </body>
+            <body name=" NoTeS ">
+                <section><title><p>1</p></title><p>Текст сноски</p></section>
+                <section><title><p>2</p></title><p>Ещё одна сноска</p></section>
+            </body>
+        </FictionBook>
+    `, {lowerCase: true});
+
+    const contents = makeWorker().extractFb2Contents(parser);
+    assert.deepStrictEqual(contents, [
+        {title: 'От автора', level: 0},
+        {title: '1', level: 0},
+        {title: 'Вложенная глава', level: 1},
+    ]);
+}
+
 async function testAppCacheRecoveryBootstrapAndRoute() {
     const mainSource = await fs.readFile(path.resolve(__dirname, '../client/main.js'), 'utf8');
     const bootstrapStart = mainSource.indexOf('async function bootstrapApplication()');
@@ -789,6 +816,7 @@ async function testDiscoveryNewestAvoidsUnboundedFallback() {
 const tests = [
     testAppCacheRecoveryBootstrapAndRoute,
     testTitleSearchKeepsIndexedPrefixFallbacks,
+    testFb2ContentsExcludeNotesBodies,
     testConvertedBookFileNames,
     testAdminSettingsRestoreKeepsSecrets,
     testAdminBackupArchiveAndDownload,

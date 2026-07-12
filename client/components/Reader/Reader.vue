@@ -1208,8 +1208,26 @@
                     @keyup.enter="jumpToNextSearchResult"
                 />
                 <div class="reader-search-toolbar">
-                    <q-btn flat dense no-caps icon="la la-angle-up" class="reader-inline-action-btn" :disable="!hasSearchResults" @click="jumpToPrevSearchResult">{{ uiText.searchPrev }}</q-btn>
-                    <q-btn flat dense no-caps icon-right="la la-angle-down" class="reader-inline-action-btn" :disable="!hasSearchResults" @click="jumpToNextSearchResult">{{ uiText.searchNext }}</q-btn>
+                    <q-btn
+                        flat
+                        dense
+                        no-caps
+                        icon="la la-angle-left"
+                        :label="uiText.searchPrev"
+                        class="reader-inline-action-btn"
+                        :disable="!hasSearchResults"
+                        @click="jumpToPrevSearchResult"
+                    />
+                    <q-btn
+                        flat
+                        dense
+                        no-caps
+                        icon-right="la la-angle-right"
+                        :label="uiText.searchNext"
+                        class="reader-inline-action-btn"
+                        :disable="!hasSearchResults"
+                        @click="jumpToNextSearchResult"
+                    />
                 </div>
                 <div class="reader-search-meta">
                     <span v-if="hasSearchResults">{{ searchResultsLabel }}</span>
@@ -1372,8 +1390,26 @@
                         @keyup.enter="jumpToNextSearchResult"
                     />
                     <div class="reader-search-toolbar">
-                        <q-btn flat dense no-caps icon="la la-angle-up" class="reader-inline-action-btn" :disable="!hasSearchResults" @click="jumpToPrevSearchResult">{{ uiText.searchPrev }}</q-btn>
-                        <q-btn flat dense no-caps icon-right="la la-angle-down" class="reader-inline-action-btn" :disable="!hasSearchResults" @click="jumpToNextSearchResult">{{ uiText.searchNext }}</q-btn>
+                        <q-btn
+                            flat
+                            dense
+                            no-caps
+                            icon="la la-angle-left"
+                            :label="uiText.searchPrev"
+                            class="reader-inline-action-btn"
+                            :disable="!hasSearchResults"
+                            @click="jumpToPrevSearchResult"
+                        />
+                        <q-btn
+                            flat
+                            dense
+                            no-caps
+                            icon-right="la la-angle-right"
+                            :label="uiText.searchNext"
+                            class="reader-inline-action-btn"
+                            :disable="!hasSearchResults"
+                            @click="jumpToNextSearchResult"
+                        />
                     </div>
                     <div class="reader-search-meta">
                         <span v-if="hasSearchResults">{{ searchResultsLabel }}</span>
@@ -2750,11 +2786,13 @@ class Reader {
     }
 
     get isDualPagedSpread() {
+        const pageLeafWidth = Math.floor((this.pageFrameWidth - this.dualPageGap) / 2);
         return !!(
             this.isPagedMode
             && !this.isCompactLayout
             && this.activePreferences.pagedSpreadMode === 'dual'
             && this.availableReaderFrameWidth >= 760
+            && pageLeafWidth >= 280
         );
     }
 
@@ -3749,6 +3787,7 @@ class Reader {
         if (this.activePreferences.pagedSpreadMode === nextMode)
             return;
 
+        this.capturePendingReflowAnchor(true);
         this.updateActivePreferences({
             pagedSpreadMode: nextMode,
         });
@@ -3761,6 +3800,10 @@ class Reader {
 
     async changeDualPageGap(delta = 0) {
         const next = Math.max(0, Math.min(240, this.dualPageGap + (Number(delta || 0) || 0)));
+        if (next === this.dualPageGap)
+            return;
+
+        this.capturePendingReflowAnchor(true);
         this.updateActivePreferences({
             dualPageGap: next,
         });
@@ -6427,6 +6470,42 @@ class Reader {
             .filter((item) => item.title);
     }
 
+    extractReaderContents(parser) {
+        const result = [];
+        const getNodeText = (node) => {
+            const parts = [];
+            node.eachDeepSelf((item) => {
+                if (item.type === parser.TEXT || item.type === parser.CDATA)
+                    parts.push(item.value);
+            });
+
+            return parts.join(' ').replace(/\s+/g, ' ').trim();
+        };
+        const walk = (sections, level = 0) => {
+            for (const section of sections) {
+                const titleNode = section.$$('\/title/');
+                const title = (titleNode && titleNode.count) ? getNodeText(titleNode) : '';
+                if (title)
+                    result.push({title, level});
+
+                const childSections = section.$$array('/section');
+                if (childSections.length)
+                    walk(childSections, level + 1);
+            }
+        };
+
+        for (const body of parser.$$array('/body')) {
+            const attrs = body.attrs() || {};
+            const bodyName = String(attrs.name || '').trim().toLowerCase();
+            if (bodyName === 'notes')
+                continue;
+
+            walk(body.$$array('/section'));
+        }
+
+        return result.slice(0, 200);
+    }
+
     escapeCssId(id = '') {
         const value = String(id || '');
         if (typeof(CSS) !== 'undefined' && CSS.escape)
@@ -8044,9 +8123,12 @@ class Reader {
 
         if (context.sectionTitle) {
             const state = (context.state || {sectionIndex: 0});
-            const item = this.contents[state.sectionIndex] || null;
-            if (item)
-                state.sectionIndex++;
+            let item = null;
+            if (context.contentsAnchor !== false) {
+                item = this.contents[state.sectionIndex] || null;
+                if (item)
+                    state.sectionIndex++;
+            }
 
             const idAttr = (item ? ` id="${item.id}"` : '');
             const level = Math.min(4, 2 + Math.max(0, context.depth || 0));
@@ -8081,12 +8163,14 @@ class Reader {
                     state: context.state,
                     depth: (context.depth || 0) + 1,
                     inSection: true,
+                    contentsAnchor: context.contentsAnchor !== false,
                 })}</section>`);
             } else if (name === 'title') {
                 parts.push(this.renderTitleNode(raw, imageMap, {
                     state: context.state,
                     depth: Math.max(0, (context.depth || 0) - 1),
                     sectionTitle: !!context.inSection,
+                    contentsAnchor: context.contentsAnchor !== false,
                 }));
             } else if (name === 'p') {
                 parts.push(`<p${this.readerNodeIdAttribute(attrs)} class="reader-paragraph">${this.renderInlineNodes(children, imageMap)}</p>`);
@@ -8097,6 +8181,7 @@ class Reader {
                     state: context.state,
                     depth: context.depth || 0,
                     inSection: false,
+                    contentsAnchor: context.contentsAnchor !== false,
                 })}</blockquote>`);
             } else if (name === 'text-author') {
                 parts.push(`<div${this.readerNodeIdAttribute(attrs)} class="reader-epigraph-author">${this.renderInlineNodes(children, imageMap)}</div>`);
@@ -8125,13 +8210,18 @@ class Reader {
     buildReaderHtml(parser) {
         const parts = [];
         const imageMap = this.extractImageMap(parser);
-        const context = {state: {sectionIndex: 0}, depth: 0, inSection: false};
+        const state = {sectionIndex: 0};
 
         for (const body of parser.$$array('/body')) {
             const attrs = (body.attrs() || {});
-            const bodyName = String(attrs.name || '').toLowerCase();
+            const bodyName = String(attrs.name || '').trim().toLowerCase();
             const bodyNode = body.rawNodes[0] || null;
-            const html = this.renderBlockNodes((bodyNode && bodyNode[3]) || [], imageMap, context);
+            const html = this.renderBlockNodes((bodyNode && bodyNode[3]) || [], imageMap, {
+                state,
+                depth: 0,
+                inSection: false,
+                contentsAnchor: bodyName !== 'notes',
+            });
 
             if (bodyName === 'notes')
                 parts.push(`<section class="reader-notes"><h2>Примечания</h2>${html}</section>`);
@@ -8169,7 +8259,6 @@ class Reader {
         book = {},
         fb2 = '',
         cover = '',
-        contents = [],
         stateResponse = {},
     } = {}) {
         const parser = this.createFb2Parser(fb2);
@@ -8185,7 +8274,7 @@ class Reader {
         const coverSizePromise = this.loadCoverIntrinsicSize(this.coverSrc);
         if (this.isPagedMode)
             await coverSizePromise;
-        this.contents = this.sanitizeContents(contents || []);
+        this.contents = this.sanitizeContents(this.extractReaderContents(parser));
         this.readerHtml = this.buildReaderHtml(parser);
         this.readerSearchText = this.normalizeReaderSearchText(this.stripHtml(this.readerHtml || '')).toLowerCase();
 
@@ -8334,7 +8423,6 @@ class Reader {
                     book: this.bookInfo.book || {},
                     fb2: this.bookInfo.fb2 || '',
                     cover: this.bookInfo.cover || '',
-                    contents: this.bookInfo.contents || [],
                     stateResponse: (source.stateResponse || {}),
                 });
             } else {
@@ -8353,7 +8441,6 @@ class Reader {
                     book: (info.book || {}),
                     fb2: info.fb2 || '',
                     cover: info.cover || '',
-                    contents: info.contents || [],
                     stateResponse,
                 });
             }
@@ -12209,6 +12296,18 @@ export default vueComponent(Reader);
     margin-top: 10px;
 }
 
+.reader-search-toolbar :deep(.q-btn) {
+    min-height: 34px;
+    padding: 4px 10px;
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1.2;
+}
+
+.reader-search-toolbar :deep(.q-icon) {
+    font-size: 18px;
+}
+
 .reader-search-meta {
     margin-top: 6px;
     color: var(--reader-muted);
@@ -12799,6 +12898,10 @@ export default vueComponent(Reader);
     }
 
     .reader-reset-control :deep(.q-btn) {
+        min-height: 44px;
+    }
+
+    .reader-search-toolbar :deep(.q-btn) {
         min-height: 44px;
     }
 

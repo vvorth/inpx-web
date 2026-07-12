@@ -794,8 +794,14 @@ class BookInfoDialog {
             }
         };
 
-        for (const body of parser.$$array('/body'))
+        for (const body of parser.$$array('/body')) {
+            const attrs = body.attrs() || {};
+            const bodyName = String(attrs.name || '').trim().toLowerCase();
+            if (bodyName === 'notes')
+                continue;
+
             walk(body.$$array('/section'));
+        }
 
         return result.slice(0, 200);
     }
