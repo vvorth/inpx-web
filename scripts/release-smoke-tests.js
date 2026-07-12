@@ -353,6 +353,14 @@ async function testReaderBookNotesMenuAndReturnLayout() {
     assert.strictEqual(returnedFromNote, 1);
 }
 
+async function testReaderTextShadowDefaultsOff() {
+    const readerSource = await fs.readFile(path.resolve(__dirname, '../client/components/Reader/Reader.vue'), 'utf8');
+
+    assert.strictEqual((readerSource.match(/textShadow: false,/g) || []).length, 2);
+    assert.strictEqual((readerSource.match(/textShadow: true,/g) || []).length, 0);
+    assert.match(readerSource, /defaultReaderPreferences = _\.cloneDeep\(this\.preferences\);/);
+}
+
 async function testReaderImageDataUrlsAreValidated() {
     const readerContent = require('../server/core/fb2/ReaderContent');
     assert.strictEqual(
@@ -1035,6 +1043,7 @@ const tests = [
     testFb2ContentsExcludeNotesBodies,
     testReaderAnnotationStaysOutsideReadingFlow,
     testReaderBookNotesMenuAndReturnLayout,
+    testReaderTextShadowDefaultsOff,
     testReaderImageDataUrlsAreValidated,
     testConvertedBookFileNames,
     testAdminSettingsRestoreKeepsSecrets,
