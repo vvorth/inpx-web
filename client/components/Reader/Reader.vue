@@ -1062,7 +1062,7 @@
             </div>
         </div>
 
-        <div v-if="fullscreenActive && contentsDialogOpen" class="reader-overlay-panel" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
+        <div v-if="fullscreenActive && contentsDialogOpen" class="reader-overlay-panel std-dialog-card--reader" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
             <div class="reader-dialog-header">
                 <div class="reader-dialog-title">{{ uiText.contents }}</div>
                 <q-btn flat dense round icon="la la-times" @click="contentsDialogOpen = false" />
@@ -1081,7 +1081,7 @@
             </div>
         </div>
 
-        <div v-if="fullscreenActive && bookmarksDialogOpen" class="reader-overlay-panel" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
+        <div v-if="fullscreenActive && bookmarksDialogOpen" class="reader-overlay-panel std-dialog-card--reader" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
             <div class="reader-dialog-header">
                 <div class="reader-dialog-title">{{ uiText.myPlaces }}</div>
                 <q-btn flat dense round icon="la la-times" @click="bookmarksDialogOpen = false" />
@@ -1178,7 +1178,7 @@
             </div>
         </div>
 
-        <div v-if="fullscreenActive && helpDialogOpen" class="reader-overlay-panel" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
+        <div v-if="fullscreenActive && helpDialogOpen" class="reader-overlay-panel std-dialog-card--reader" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
             <div class="reader-dialog-header">
                 <div class="reader-dialog-title">{{ uiText.readerHelp }}</div>
                 <q-btn flat dense round icon="la la-times" @click="helpDialogOpen = false" />
@@ -1190,7 +1190,7 @@
             </div>
         </div>
 
-        <div v-if="fullscreenActive && searchDialogOpen && isPagedMode" class="reader-overlay-panel" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
+        <div v-if="fullscreenActive && searchDialogOpen && isPagedMode" class="reader-overlay-panel std-dialog-card--reader" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
             <div class="reader-dialog-header">
                 <div class="reader-dialog-title">{{ uiText.searchTitle }}</div>
                 <q-btn flat dense round icon="la la-times" @click="searchDialogOpen = false" />
@@ -1202,6 +1202,7 @@
                     dense
                     outlined
                     clearable
+                    :aria-label="uiText.searchTitle"
                     :placeholder="uiText.searchPlaceholder"
                     @update:model-value="handleSearchInput"
                     @keyup.enter="jumpToNextSearchResult"
@@ -1219,7 +1220,7 @@
         </div>
 
         <q-dialog v-if="!fullscreenActive" v-model="contentsDialogOpen" position="right">
-            <div class="reader-dialog reader-dialog--contents" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
+            <div class="reader-dialog reader-dialog--contents std-dialog-card--reader" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
                 <div class="reader-dialog-header">
                     <div class="reader-dialog-title">{{ uiText.contents }}</div>
                     <q-btn flat dense round icon="la la-times" @click="contentsDialogOpen = false" />
@@ -1240,7 +1241,7 @@
         </q-dialog>
 
         <q-dialog v-if="!fullscreenActive" v-model="bookmarksDialogOpen" position="right">
-            <div class="reader-dialog reader-dialog--contents" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
+            <div class="reader-dialog reader-dialog--contents std-dialog-card--reader" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
                 <div class="reader-dialog-header">
                     <div class="reader-dialog-title">{{ uiText.myPlaces }}</div>
                     <q-btn flat dense round icon="la la-times" @click="bookmarksDialogOpen = false" />
@@ -1339,7 +1340,7 @@
         </q-dialog>
 
         <q-dialog v-if="!fullscreenActive" v-model="helpDialogOpen" position="right">
-            <div class="reader-dialog reader-dialog--contents" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
+            <div class="reader-dialog reader-dialog--contents std-dialog-card--reader" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
                 <div class="reader-dialog-header">
                     <div class="reader-dialog-title">{{ uiText.readerHelp }}</div>
                     <q-btn flat dense round icon="la la-times" @click="helpDialogOpen = false" />
@@ -1353,7 +1354,7 @@
         </q-dialog>
 
         <q-dialog v-if="!fullscreenActive && isPagedMode" v-model="searchDialogOpen" position="right">
-            <div class="reader-dialog reader-dialog--contents" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
+            <div class="reader-dialog reader-dialog--contents std-dialog-card--reader" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
                 <div class="reader-dialog-header">
                     <div class="reader-dialog-title">{{ uiText.searchTitle }}</div>
                     <q-btn flat dense round icon="la la-times" @click="searchDialogOpen = false" />
@@ -1365,6 +1366,7 @@
                         dense
                         outlined
                         clearable
+                        :aria-label="uiText.searchTitle"
                         :placeholder="uiText.searchPlaceholder"
                         @update:model-value="handleSearchInput"
                         @keyup.enter="jumpToNextSearchResult"
@@ -1383,7 +1385,7 @@
         </q-dialog>
 
         <q-dialog v-model="bookmarkComposerOpen">
-            <div class="reader-dialog reader-dialog--composer" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
+            <div class="reader-dialog reader-dialog--composer std-dialog-card--reader" :class="readerThemeClass" :style="readerDialogSurfaceStyle">
                 <div class="reader-dialog-header">
                     <div class="reader-dialog-title">{{ uiText.newPlace }}</div>
                     <q-btn flat dense round icon="la la-times" @click="bookmarkComposerOpen = false" />
@@ -10538,10 +10540,19 @@ export default vueComponent(Reader);
 
 .reader-reset-control :deep(.q-btn) {
     min-height: 34px;
+    padding: 3px 10px;
     border: 1px solid var(--reader-border);
-    border-radius: 12px;
+    border-radius: 14px;
     background: var(--reader-surface-2);
     color: var(--reader-text);
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1.2;
+    letter-spacing: 0;
+}
+
+.reader-reset-control :deep(.q-icon) {
+    font-size: 18px;
 }
 
 .reader-control-hint {
@@ -12035,17 +12046,17 @@ export default vueComponent(Reader);
     box-shadow: 0 24px 56px rgba(0, 0, 0, 0.26);
 }
 
-.reader-dialog :deep(.q-btn),
-.reader-dialog :deep(.q-icon),
-.reader-dialog :deep(.q-field__native),
-.reader-dialog :deep(.q-field__input),
-.reader-dialog :deep(.q-field__label),
-.reader-dialog :deep(.q-field__marginal),
-.reader-dialog :deep(.q-field__control) {
+.std-dialog-card--reader :deep(.q-btn),
+.std-dialog-card--reader :deep(.q-icon),
+.std-dialog-card--reader :deep(.q-field__native),
+.std-dialog-card--reader :deep(.q-field__input),
+.std-dialog-card--reader :deep(.q-field__label),
+.std-dialog-card--reader :deep(.q-field__marginal),
+.std-dialog-card--reader :deep(.q-field__control) {
     color: var(--reader-text);
 }
 
-.reader-dialog :deep(.q-field__control) {
+.std-dialog-card--reader :deep(.q-field__control) {
     background: var(--reader-surface-2);
 }
 
@@ -12785,6 +12796,10 @@ export default vueComponent(Reader);
     .reader-theme-switch :deep(.q-btn),
     .reader-stepper :deep(.q-btn) {
         min-height: 36px;
+    }
+
+    .reader-reset-control :deep(.q-btn) {
+        min-height: 44px;
     }
 
     .reader-font-select :deep(.q-field__control) {
