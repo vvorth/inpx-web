@@ -5379,6 +5379,21 @@ class Reader {
         this.stableReaderReflowAnchor = safeAnchor;
     }
 
+    clearPendingReaderNavigationRestore({clearNoteReturn = false} = {}) {
+        this.pendingReflowAnchor = null;
+        this.stableReaderReflowAnchor = null;
+        this.reflowPageStartOverride = null;
+        this.pendingReaderAnchorJump = null;
+        this.restorePending = false;
+        this.restoreFromSavedProgress = false;
+        if (this.restoreProgressFrame && typeof cancelAnimationFrame === 'function')
+            cancelAnimationFrame(this.restoreProgressFrame);
+        this.restoreProgressFrame = 0;
+        this.clearReaderReflowAnchorHighlight();
+        if (clearNoteReturn)
+            this.readerNoteReturnPoint = null;
+    }
+
     capturePendingReflowAnchor(force = false, {preferStable = false} = {}) {
         if (!this.bookUid)
             return null;
@@ -6498,6 +6513,8 @@ class Reader {
     setCurrentPagedPage(index = 0, save = false) {
         if (!this.isPagedMode)
             return;
+        if (save)
+            this.clearPendingReaderNavigationRestore();
 
         const rawIndex = Math.max(0, Math.min(this.totalPagedLogicalPages - 1, Math.round(index)));
         const nextIndex = this.isDualPagedSpread ? rawIndex - (rawIndex % this.pagedStep) : rawIndex;
@@ -9169,6 +9186,7 @@ class Reader {
     }
 
     jumpToContent(id = '') {
+        this.clearPendingReaderNavigationRestore({clearNoteReturn: true});
         this.closeContentsDialog();
         this.chromeHidden = false;
         if (!id)
@@ -9350,7 +9368,7 @@ class Reader {
 
     returnFromReaderNote() {
         const point = this.readerNoteReturnPoint;
-        this.readerNoteReturnPoint = null;
+        this.clearPendingReaderNavigationRestore({clearNoteReturn: true});
         if (!point)
             return;
 
@@ -9851,6 +9869,7 @@ class Reader {
     }
 
     jumpToBookmark(bookmark = {}) {
+        this.clearPendingReaderNavigationRestore({clearNoteReturn: true});
         this.bookmarksDialogOpen = false;
         this.chromeHidden = false;
         if (!this.$refs.scroller)
@@ -9890,6 +9909,7 @@ class Reader {
     }
 
     jumpToProgress() {
+        this.clearPendingReaderNavigationRestore({clearNoteReturn: true});
         this.bookmarksDialogOpen = false;
         this.restorePending = true;
         this.$nextTick(() => {

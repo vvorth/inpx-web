@@ -355,6 +355,40 @@ async function testReaderBookNotesMenuAndReturnLayout() {
     };
     readerBack.goBack();
     assert.strictEqual(returnedFromNote, 1);
+
+    const clearRestoreStart = readerSource.indexOf('    clearPendingReaderNavigationRestore({clearNoteReturn = false} = {}) {');
+    const clearRestoreEnd = readerSource.indexOf('    capturePendingReflowAnchor(', clearRestoreStart);
+    assert.ok(clearRestoreStart >= 0 && clearRestoreEnd > clearRestoreStart);
+    const clearRestoreMethod = readerSource.slice(clearRestoreStart, clearRestoreEnd).trim();
+    const ReaderNavigationRestore = new Function(`return class ReaderNavigationRestore {${clearRestoreMethod}}`)();
+    const navigationRestore = new ReaderNavigationRestore();
+    navigationRestore.pendingReflowAnchor = {textSnippet: 'notes'};
+    navigationRestore.stableReaderReflowAnchor = {textSnippet: 'notes'};
+    navigationRestore.reflowPageStartOverride = {pageIndex: 72};
+    navigationRestore.pendingReaderAnchorJump = {id: 'reader-book-notes'};
+    navigationRestore.restorePending = true;
+    navigationRestore.restoreFromSavedProgress = true;
+    navigationRestore.restoreProgressFrame = 0;
+    navigationRestore.readerNoteReturnPoint = {pageIndex: 3};
+    let clearedHighlights = 0;
+    navigationRestore.clearReaderReflowAnchorHighlight = () => { clearedHighlights += 1; };
+    navigationRestore.clearPendingReaderNavigationRestore({clearNoteReturn: true});
+    assert.strictEqual(navigationRestore.pendingReflowAnchor, null);
+    assert.strictEqual(navigationRestore.stableReaderReflowAnchor, null);
+    assert.strictEqual(navigationRestore.reflowPageStartOverride, null);
+    assert.strictEqual(navigationRestore.pendingReaderAnchorJump, null);
+    assert.strictEqual(navigationRestore.restorePending, false);
+    assert.strictEqual(navigationRestore.restoreFromSavedProgress, false);
+    assert.strictEqual(navigationRestore.restoreProgressFrame, 0);
+    assert.strictEqual(navigationRestore.readerNoteReturnPoint, null);
+    assert.strictEqual(clearedHighlights, 1);
+    navigationRestore.readerNoteReturnPoint = {pageIndex: 4};
+    navigationRestore.clearPendingReaderNavigationRestore();
+    assert.deepStrictEqual(navigationRestore.readerNoteReturnPoint, {pageIndex: 4});
+
+    assert.match(readerSource, /jumpToContent\(id = ''\) \{\s*this\.clearPendingReaderNavigationRestore\(\{clearNoteReturn: true\}\);/);
+    assert.match(readerSource, /setCurrentPagedPage\(index = 0, save = false\) \{[\s\S]{0,140}if \(save\)\s*this\.clearPendingReaderNavigationRestore\(\);/);
+    assert.match(readerSource, /returnFromReaderNote\(\) \{\s*const point = this\.readerNoteReturnPoint;\s*this\.clearPendingReaderNavigationRestore\(\{clearNoteReturn: true\}\);/);
 }
 
 async function testReaderTextShadowDefaultsOff() {
