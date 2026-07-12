@@ -333,7 +333,9 @@ async function testReaderBookNotesMenuAndReturnLayout() {
     assert.match(readerSource, /:class="\{'reader-back-btn--note-return': readerNoteReturnPoint\}"/);
     assert.match(readerSource, /:aria-label="readerNoteReturnPoint \? uiText\.noteReturn : uiText\.back"/);
     assert.match(readerSource, /:data-testid="readerNoteReturnPoint \? 'reader-note-return' : null"/);
-    assert.match(readerSource, /\{\{ readerNoteReturnPoint \? uiText\.noteReturn : uiText\.back \}\}/);
+    assert.match(readerSource, /:label="isCompactLayout \? '' : \(readerNoteReturnPoint \? uiText\.noteReturn : uiText\.back\)"/);
+    assert.doesNotMatch(readerSource, /\{\{ readerNoteReturnPoint \? uiText\.noteReturn : uiText\.back \}\}/);
+    assert.match(readerSource, /\.reader-back-btn--note-return :deep\(\.block\) \{\s*display: none;/);
     assert.doesNotMatch(readerSource, /class="reader-note-return-btn"/);
     assert.match(readerSource, /v-if="bookUid && isCompactLayout && \(showCompactStatusBar \|\| !compactChromeHidden \|\| controlsOpen\)"/);
     assert.match(readerSource, /v-if="bookUid && showDesktopStatusBar"/);
@@ -389,6 +391,7 @@ async function testReaderHomeFieldsIgnoreGlobalDarkTheme() {
         readerSource,
         /\.reader-page \.reader-home-search :deep\(\.q-field__control\),\s*\.reader-page \.reader-home-sort :deep\(\.q-field__control\) \{[\s\S]{0,180}background: var\(--reader-surface\);/
     );
+    assert.match(readerSource, /\.reader-toolbar,\s*\.reader-home \{\s*text-shadow: none !important;/);
 }
 
 async function testReaderImageDataUrlsAreValidated() {

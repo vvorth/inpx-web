@@ -19,10 +19,9 @@
                     :class="{'reader-back-btn--note-return': readerNoteReturnPoint}"
                     :aria-label="readerNoteReturnPoint ? uiText.noteReturn : uiText.back"
                     :data-testid="readerNoteReturnPoint ? 'reader-note-return' : null"
+                    :label="isCompactLayout ? '' : (readerNoteReturnPoint ? uiText.noteReturn : uiText.back)"
                     @click="goBack"
-                >
-                    {{ readerNoteReturnPoint ? uiText.noteReturn : uiText.back }}
-                </q-btn>
+                />
 
                 <div class="reader-book-meta">
                     <div
@@ -12386,6 +12385,11 @@ export default vueComponent(Reader);
 .std-dialog-card--reader :deep(.q-field__marginal),
 .std-dialog-card--reader :deep(.q-field__control) {
     color: var(--reader-text);
+}
+
+.reader-toolbar,
+.reader-home {
+    text-shadow: none !important;
 }
 
 .std-dialog-card--reader :deep(.q-field__control) {
