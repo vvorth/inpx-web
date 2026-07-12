@@ -329,6 +329,25 @@ async function testAdminBackupArchiveAndDownload() {
             adminPassword: 'admin',
         });
 
+        // A full admin restore is authoritative: it must be able to replace a
+        // newer local reset generation with the progress stored in the backup.
+        await restoreWorker.readingListStore.save({
+            version: 5,
+            users: [{
+                id: 'reader',
+                name: 'Reader before restore',
+                readerProgress: {
+                    'book:stale': {
+                        percent: 0.9,
+                        updatedAt: '2026-01-01T00:00:00.000Z',
+                    },
+                },
+            }],
+            lists: [],
+        });
+        const preRestoreReset = await restoreWorker.readingListStore.clearReaderProgress('reader');
+        assert.strictEqual(preRestoreReset.generation, 1);
+
         const restored = await restoreWorker.importAdminBackup('admin', 'token', {
             fileName: result.fileName,
             contentBase64: (await fs.readFile(path.join(bookDir, 'backup', result.fileName))).toString('base64'),
@@ -344,8 +363,18 @@ async function testAdminBackupArchiveAndDownload() {
         const restoredLists = await restoreWorker.readingListStore.load();
         const restoredReader = restoredLists.users.find(user => user.id === 'reader');
         assert.ok(restoredReader);
+        assert.strictEqual(restoredReader.readerProgressGeneration, 2);
         assert.strictEqual(restoredReader.readerProgress['book:1'].percent, 0.5);
+        assert.strictEqual(restoredReader.readerProgress['book:1'].generation, 2);
         assert.strictEqual(restoredReader.readerBookmarks['book:1'][0].id, 'bookmark-1');
+
+        const staleAfterRestore = await restoreWorker.readingListStore.updateReaderProgress('reader', 'book:1', {
+            percent: 0.99,
+            updatedAt: '2030-01-01T00:00:00.000Z',
+            generation: 1,
+        });
+        assert.strictEqual(staleAfterRestore.generationMismatch, true);
+        assert.strictEqual(staleAfterRestore.percent, 0.5);
     });
 }
 
@@ -425,6 +454,114 @@ async function testUserBackupExportsAndRestoresReaderState() {
         assert.strictEqual(restored.user.readerProgress['source:book:1'].sectionId, 'chapter-3');
         assert.strictEqual(restored.user.readerBookmarks['source:book:1'][0].note, 'Note');
         assert.deepStrictEqual(restored.user.discoveryPreferences.hiddenBooks, ['source:book:2']);
+    });
+}
+
+async function testReaderProgressResetAndHiddenState() {
+    await withTempDir(async(dir) => {
+        const ReadingListStore = require('../server/core/ReadingListStore');
+        const store = new ReadingListStore({
+            dataDir: dir,
+            adminLogin: 'admin',
+            adminPassword: 'admin',
+        });
+        await store.save({
+            version: 5,
+            users: [{
+                id: 'reader-reset',
+                name: 'Reader Reset',
+                readerProgress: {
+                    'book:hidden': {
+                        percent: 0.2,
+                        updatedAt: '2026-01-01T00:00:00.000Z',
+                        hidden: true,
+                    },
+                    'book:visible': {
+                        percent: 0.6,
+                        updatedAt: '2026-01-01T00:00:00.000Z',
+                        hidden: false,
+                    },
+                },
+                readerBookmarks: {
+                    'book:hidden': [{id: 'bookmark-reset', title: 'Keep me'}],
+                },
+            }],
+            lists: [],
+        });
+
+        const hidden = await store.updateReaderProgress('reader-reset', 'book:hidden', {
+            percent: 0.4,
+            updatedAt: '2026-01-02T00:00:00.000Z',
+        });
+        assert.strictEqual(hidden.hidden, true);
+
+        const staleSnapshot = await store.load();
+        const reset = await store.clearReaderProgress('reader-reset');
+        assert.strictEqual(reset.success, true);
+        assert.strictEqual(reset.count, 2);
+        assert.strictEqual(reset.generation, 1);
+        assert.deepStrictEqual(reset.bookUids.sort(), ['book:hidden', 'book:visible']);
+        assert.ok(Number.isFinite(Date.parse(reset.resetAt)));
+
+        await store.save(staleSnapshot);
+
+        let data = await store.load();
+        let user = data.users.find(item => item.id === 'reader-reset');
+        assert.deepStrictEqual(user.readerProgress, {});
+        assert.strictEqual(user.readerProgressGeneration, reset.generation);
+        assert.strictEqual(user.readerProgressResetAt, reset.resetAt);
+        assert.strictEqual(user.readerBookmarks['book:hidden'][0].id, 'bookmark-reset');
+
+        const stale = await store.updateReaderProgress('reader-reset', 'book:hidden', {
+            percent: 0.9,
+            updatedAt: '2026-01-03T00:00:00.000Z',
+        });
+        assert.strictEqual(stale.reset, true);
+        assert.strictEqual(stale.generation, reset.generation);
+        data = await store.load();
+        user = data.users.find(item => item.id === 'reader-reset');
+        assert.deepStrictEqual(user.readerProgress, {});
+
+        // A valid reset generation must not depend on synchronized client/server clocks.
+        const freshUpdatedAt = '2001-01-01T00:00:00.000Z';
+        const fresh = await store.updateReaderProgress('reader-reset', 'book:hidden', {
+            percent: 0.1,
+            updatedAt: freshUpdatedAt,
+            generation: reset.generation,
+        });
+        assert.strictEqual(fresh.percent, 0.1);
+        assert.strictEqual(fresh.hidden, false);
+        data = await store.load();
+        user = data.users.find(item => item.id === 'reader-reset');
+        assert.strictEqual(user.readerProgress['book:hidden'].updatedAt, freshUpdatedAt);
+
+        const explicitlyHidden = await store.updateReaderProgress('reader-reset', 'book:hidden', {
+            hidden: true,
+            percent: 0.1,
+        });
+        assert.strictEqual(explicitlyHidden.hidden, true);
+
+        await Promise.all([
+            store.updateReaderProgress('reader-reset', 'book:parallel-a', {
+                percent: 0.2,
+                updatedAt: '2002-01-01T00:00:00.000Z',
+                generation: reset.generation,
+            }),
+            store.updateReaderProgress('reader-reset', 'book:parallel-b', {
+                percent: 0.3,
+                updatedAt: '2003-01-01T00:00:00.000Z',
+                generation: reset.generation,
+            }),
+        ]);
+        data = await store.load();
+        user = data.users.find(item => item.id === 'reader-reset');
+        assert.strictEqual(user.readerProgress['book:parallel-a'].percent, 0.2);
+        assert.strictEqual(user.readerProgress['book:parallel-b'].percent, 0.3);
+
+        await store.setBooksRead('reader-reset', ['book:read'], true);
+        data = await store.load();
+        user = data.users.find(item => item.id === 'reader-reset');
+        assert.strictEqual(user.readerProgress['book:read'].generation, reset.generation);
     });
 }
 
@@ -656,6 +793,7 @@ const tests = [
     testAdminSettingsRestoreKeepsSecrets,
     testAdminBackupArchiveAndDownload,
     testUserBackupExportsAndRestoresReaderState,
+    testReaderProgressResetAndHiddenState,
     testCoverCacheRoutesAndCleaner,
     testCacheRotationUsesTargetWatermark,
     testCacheRotationAlignsToServerClock,

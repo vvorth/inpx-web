@@ -618,22 +618,38 @@
                                 type="button"
                                 class="reader-home-tab"
                                 :class="{'is-active': readerHomeFilter === item.value}"
+                                :disabled="readerHomeResetting"
                                 @click="setReaderHomeFilter(item.value)"
                             >
                                 {{ item.label }} <span>{{ readerHomeCounters[item.value] || 0 }}</span>
                             </button>
                         </div>
-                        <q-btn
-                            flat
-                            dense
-                            round
-                            icon="la la-sync"
-                            class="reader-home-refresh-btn reader-home-action-btn"
-                            :aria-label="uiText.refresh"
-                            @click="loadReaderHome"
-                        >
-                            <q-tooltip :delay="600">{{ uiText.refresh }}</q-tooltip>
-                        </q-btn>
+                        <div class="reader-home-tab-actions">
+                            <q-btn
+                                flat
+                                dense
+                                no-caps
+                                icon="la la-undo-alt"
+                                class="reader-home-reset-btn reader-home-action-btn reader-home-action-btn--danger"
+                                :disable="readerHomeResetting || !(readerHomeCounters.all > 0)"
+                                :loading="readerHomeResetting"
+                                @click="resetReaderHomeProgress"
+                            >
+                                {{ uiText.resetReaderProgress }}
+                            </q-btn>
+                            <q-btn
+                                flat
+                                dense
+                                round
+                                icon="la la-sync"
+                                class="reader-home-refresh-btn reader-home-action-btn"
+                                :aria-label="uiText.refresh"
+                                :disable="readerHomeResetting"
+                                @click="loadReaderHome"
+                            >
+                                <q-tooltip :delay="600">{{ uiText.refresh }}</q-tooltip>
+                            </q-btn>
+                        </div>
                     </div>
 
                     <div class="reader-home-search-row">
@@ -642,6 +658,7 @@
                             dense
                             outlined
                             clearable
+                            :disable="readerHomeResetting"
                             debounce="250"
                             class="reader-home-search"
                             :placeholder="uiText.readerHomeSearchPlaceholder"
@@ -659,6 +676,7 @@
                             emit-value
                             map-options
                             options-dense
+                            :disable="readerHomeResetting"
                             class="reader-home-sort"
                             dropdown-icon="la la-angle-down"
                             @update:model-value="loadReaderHome"
@@ -1489,6 +1507,7 @@ class Reader {
     searchResults = [];
     currentSearchResultIndex = -1;
     readerHomeLoading = false;
+    readerHomeResetting = false;
     readerHomeBooks = [];
     readerHomeCounters = {all: 0, reading: 0, read: 0, hidden: 0};
     readerHomeFilter = 'reading';
@@ -1601,6 +1620,7 @@ class Reader {
     savePreferencesDebounced = null;
     progressSavePromise = null;
     pendingReaderProgressUpload = false;
+    readerProgressGeneration = 0;
     readerLoadJobId = 0;
     readerBackgroundMaxBytes = 4 * 1024 * 1024;
     statusClockText = '';
@@ -2391,12 +2411,16 @@ class Reader {
             readerHomeSortAuthor: 'По автору',
             readerHomeSortProgressDesc: 'Прогресс по убыванию',
             readerHomeSortProgressAsc: 'Прогресс по возрастанию',
+            resetReaderProgress: 'Сбросить прогресс',
+            resetReaderProgressAction: 'Сбросить',
+            resetReaderProgressConfirm: 'Сбросить все позиции чтения профиля «{profile}»? Книги исчезнут из разделов «Читаю», «Прочитано» и «Скрыто». Закладки и настройки читалки останутся.',
+            resetReaderProgressSuccess: 'Прогресс чтения сброшен',
             openBook: 'Открыть',
             restoreToReading: 'Вернуть',
             restoreReadingSuccess: 'Книга возвращена в чтение',
-            removeFromReading: '\u0423\u0431\u0440\u0430\u0442\u044c \u0438\u0437 \u0447\u0442\u0435\u043d\u0438\u044f',
-            removeReadingConfirm: '\u0423\u0431\u0440\u0430\u0442\u044c \u043a\u043d\u0438\u0433\u0443 \u00ab{title}\u00bb \u0438\u0437 \u0442\u0435\u043a\u0443\u0449\u0435\u0433\u043e \u0447\u0442\u0435\u043d\u0438\u044f?',
-            removeReadingSuccess: '\u041a\u043d\u0438\u0433\u0430 \u0443\u0431\u0440\u0430\u043d\u0430 \u0438\u0437 \u0442\u0435\u043a\u0443\u0449\u0435\u0433\u043e \u0447\u0442\u0435\u043d\u0438\u044f',
+            removeFromReading: 'Скрыть',
+            removeReadingConfirm: 'Скрыть книгу «{title}»? Её можно будет вернуть из раздела «Скрыто».',
+            removeReadingSuccess: 'Книга перемещена в «Скрыто»',
             untitledBook: '\u0411\u0435\u0437 \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u044f',
             series: '\u0421\u0435\u0440\u0438\u044f',
             themeDark: '\u0422\u0451\u043c\u043d\u0430\u044f',
@@ -3312,11 +3336,7 @@ class Reader {
     }
 
     get hasSavedProgress() {
-        return !!(this.progress && (
-            String(this.progress.sectionId || '').trim()
-            || Number(this.progress.percent || 0) > 0
-            || String(this.progress.updatedAt || '').trim()
-        ));
+        return this.hasReaderProgressPlace(this.progress || {});
     }
 
     get hasReaderPlaces() {
@@ -3535,6 +3555,7 @@ class Reader {
                     query: this.readerHomeSearch,
                     limit: 300,
                 });
+                this.readerProgressGeneration = Math.max(0, parseInt(result && result.progressGeneration, 10) || 0);
                 this.readerHomeCounters = Object.assign({all: 0, reading: 0, read: 0, hidden: 0}, result.counters || {});
                 this.readerHomeBooks = Array.isArray(result.items)
                     ? result.items.filter((book) => String(book.bookUid || '').trim())
@@ -3589,6 +3610,7 @@ class Reader {
                 hidden: true,
                 percent: Number(book.percent || 0) || 0,
                 sectionId: String(book.sectionId || '').trim(),
+                generation: this.readerProgressGeneration,
             });
             await this.loadReaderHome();
             this.$root.notify.success(this.uiText.removeReadingSuccess, '', this.readerNotifyOptions);
@@ -3607,11 +3629,47 @@ class Reader {
                 hidden: false,
                 percent: Number(book.percent || 0) || 0,
                 sectionId: String(book.sectionId || '').trim(),
+                generation: this.readerProgressGeneration,
             });
             await this.loadReaderHome();
             this.$root.notify.success(this.uiText.restoreReadingSuccess, '', this.readerNotifyOptions);
         } catch (e) {
             this.$root.stdDialog.alert(e.message || String(e), this.uiText.error);
+        }
+    }
+
+    async resetReaderHomeProgress() {
+        if (this.readerHomeResetting || !(Number(this.readerHomeCounters.all || 0) > 0))
+            return;
+
+        const profile = this.currentSelectedProfile || {};
+        const profileName = he.encode(String(profile.name || profile.login || this.uiText.profile).trim());
+        const confirmed = await this.$root.stdDialog.confirm(
+            this.uiText.resetReaderProgressConfirm.replace('{profile}', profileName),
+            this.uiText.resetReaderProgress,
+            {
+                dialogClass: 'std-dialog-card--reader',
+                dialogStyle: this.readerDialogStyle,
+                okLabel: this.uiText.resetReaderProgressAction,
+            },
+        );
+        if (!confirmed)
+            return;
+
+        this.readerHomeResetting = true;
+        try {
+            const result = await this.$root.api.clearReaderProgress();
+            this.readerProgressGeneration = Math.max(0, parseInt(result && result.generation, 10) || 0);
+            this.clearStoredReaderProgress('', {
+                all: true,
+                bookUids: Array.isArray(result && result.bookUids) ? result.bookUids : [],
+            });
+            await this.loadReaderHome();
+            this.$root.notify.success(this.uiText.resetReaderProgressSuccess, '', this.readerNotifyOptions);
+        } catch (e) {
+            this.$root.stdDialog.alert(e.message || String(e), this.uiText.error);
+        } finally {
+            this.readerHomeResetting = false;
         }
     }
 
@@ -8129,12 +8187,25 @@ class Reader {
         this.readerHtml = this.buildReaderHtml(parser);
         this.readerSearchText = this.normalizeReaderSearchText(this.stripHtml(this.readerHtml || '')).toLowerCase();
 
-        const stateProgress = Object.assign({percent: 0, sectionId: '', pageIndex: 0, textOffset: -1, textSnippet: '', updatedAt: ''}, (stateResponse && stateResponse.progress) || {});
+        const emptyProgress = {percent: 0, sectionId: '', pageIndex: 0, textOffset: -1, textSnippet: '', updatedAt: ''};
+        const progressResetAt = String((stateResponse && stateResponse.progressResetAt) || '').trim();
+        const progressGeneration = Math.max(0, parseInt(stateResponse && stateResponse.progressGeneration, 10) || 0);
+        this.readerProgressGeneration = progressGeneration;
+        const stateProgress = this.readerProgressAfterReset(
+            Object.assign({}, emptyProgress, (stateResponse && stateResponse.progress) || {}),
+            progressResetAt,
+            progressGeneration,
+        ) || Object.assign({}, emptyProgress);
         const serverProgress = this.normalizeReaderProgress(stateProgress);
+        const profileProgress = this.readerProgressAfterReset(this.getCurrentProfileBookProgress(), progressResetAt, progressGeneration);
+        const storedProgress = this.readStoredReaderProgress();
+        const usableStoredProgress = this.readerProgressAfterReset(storedProgress, progressResetAt, progressGeneration);
+        if (storedProgress && !usableStoredProgress)
+            this.clearStoredReaderProgress(this.bookUid);
         let restoredProgress = this.hasReaderProgressPlace(stateProgress)
             ? stateProgress
-            : this.mergeReaderProgress(stateProgress, this.getCurrentProfileBookProgress());
-        restoredProgress = this.mergeReaderProgress(restoredProgress, this.readStoredReaderProgress(), {
+            : this.mergeReaderProgress(stateProgress, profileProgress);
+        restoredProgress = this.mergeReaderProgress(restoredProgress, usableStoredProgress, {
             preferSecondaryRecentForward: true,
         });
         this.progress = restoredProgress;
@@ -9518,6 +9589,32 @@ class Reader {
         });
     }
 
+    handleReaderProgressGenerationResponse(rawResponseProgress = {}) {
+        if (!rawResponseProgress || typeof rawResponseProgress !== 'object')
+            return false;
+
+        const responseGeneration = Number(rawResponseProgress.generation);
+        if (Number.isFinite(responseGeneration))
+            this.readerProgressGeneration = Math.max(0, Math.round(responseGeneration));
+
+        if (rawResponseProgress.reset !== true && rawResponseProgress.generationMismatch !== true)
+            return false;
+
+        if (rawResponseProgress.reset === true) {
+            this.progress = this.normalizeReaderProgress({
+                generation: this.readerProgressGeneration,
+            });
+            this.currentSectionId = '';
+            this.clearStoredReaderProgress(this.bookUid);
+            return true;
+        }
+
+        this.progress = this.normalizeReaderProgress(rawResponseProgress);
+        this.currentSectionId = String(this.progress.sectionId || '').trim();
+        this.writeStoredReaderProgress(this.progress);
+        return true;
+    }
+
     async persistProgress() {
         if (!this.bookUid)
             return;
@@ -9549,8 +9646,18 @@ class Reader {
             textOffset: requestProgress.textOffset,
             textSnippet: requestProgress.textSnippet,
             updatedAt: requestProgress.updatedAt,
+            generation: this.readerProgressGeneration,
         };
         let response = await api.updateReaderProgress(this.bookUid, progressPatch, {suppressProfileLogin: true});
+        let rawResponseProgress = (response && response.progress ? response.progress : {});
+        const responseGeneration = Number(rawResponseProgress && rawResponseProgress.generation);
+        if (Number.isFinite(responseGeneration)) {
+            this.readerProgressGeneration = Math.max(0, Math.round(responseGeneration));
+            progressPatch.generation = this.readerProgressGeneration;
+        }
+        if (this.handleReaderProgressGenerationResponse(rawResponseProgress))
+            return;
+
         const currentProgress = this.normalizeReaderProgress(this.progress);
         const requestTime = Date.parse(requestProgress.updatedAt || '');
         const currentTime = Date.parse(currentProgress.updatedAt || '');
@@ -9563,7 +9670,7 @@ class Reader {
             return;
         }
 
-        const responseProgress = this.normalizeReaderProgress(response && response.progress ? response.progress : {});
+        const responseProgress = this.normalizeReaderProgress(rawResponseProgress);
         const responseDiffers = (
             responseProgress.pageIndex !== requestProgress.pageIndex
             || responseProgress.textOffset !== requestProgress.textOffset
@@ -9573,6 +9680,12 @@ class Reader {
         );
         if (responseDiffers) {
             response = await api.updateReaderProgress(this.bookUid, Object.assign({}, progressPatch, {force: true}), {suppressProfileLogin: true});
+            rawResponseProgress = (response && response.progress ? response.progress : {});
+            const forcedGeneration = Number(rawResponseProgress && rawResponseProgress.generation);
+            if (Number.isFinite(forcedGeneration))
+                this.readerProgressGeneration = Math.max(0, Math.round(forcedGeneration));
+            if (this.handleReaderProgressGenerationResponse(rawResponseProgress))
+                return;
         }
 
         const savedProgress = this.mergeReaderProgress(this.progress, response && response.progress ? response.progress : {});
@@ -9754,6 +9867,62 @@ class Reader {
         }
     }
 
+    readerProgressAfterReset(progress = null, resetAt = '', generation = 0) {
+        if (!progress || typeof progress !== 'object')
+            return null;
+
+        const expectedGeneration = Math.max(0, parseInt(generation, 10) || 0);
+        const progressGeneration = Math.max(0, parseInt(progress.generation, 10) || 0);
+        if (expectedGeneration > 0)
+            return (progressGeneration === expectedGeneration) ? progress : null;
+
+        const resetTime = Date.parse(String(resetAt || '').trim());
+        if (!Number.isFinite(resetTime))
+            return progress;
+
+        const progressTime = Date.parse(String(progress.updatedAt || '').trim());
+        return (Number.isFinite(progressTime) && progressTime > resetTime) ? progress : null;
+    }
+
+    clearStoredReaderProgress(bookUid = '', options = {}) {
+        if (typeof localStorage === 'undefined')
+            return;
+
+        try {
+            const raw = localStorage.getItem(readerProgressStorageKey);
+            if (!raw)
+                return;
+
+            const parsed = JSON.parse(raw);
+            const byUser = (parsed && parsed.byUser && typeof parsed.byUser === 'object') ? parsed.byUser : {};
+            const globalProgress = (parsed && parsed.progress && typeof parsed.progress === 'object') ? parsed.progress : {};
+            const userId = String(this.currentUserId || '').trim();
+            const clearAll = options && options.all === true;
+            const normalizedBookUid = String(bookUid || '').trim();
+            const knownBookUids = Array.isArray(options && options.bookUids)
+                ? options.bookUids.map((uid) => String(uid || '').trim()).filter(Boolean)
+                : [];
+
+            if (clearAll) {
+                Object.keys(globalProgress).forEach((uid) => delete globalProgress[uid]);
+                if (userId)
+                    byUser[userId] = {};
+                knownBookUids.forEach((uid) => delete globalProgress[uid]);
+            } else if (normalizedBookUid) {
+                delete globalProgress[normalizedBookUid];
+                if (userId && byUser[userId] && typeof byUser[userId] === 'object')
+                    delete byUser[userId][normalizedBookUid];
+            }
+
+            localStorage.setItem(readerProgressStorageKey, JSON.stringify({
+                progress: globalProgress,
+                byUser,
+            }));
+        } catch (e) {
+            // ignore storage failures
+        }
+    }
+
     writeStoredReaderPreferences() {
         if (typeof localStorage === 'undefined')
             return;
@@ -9838,6 +10007,7 @@ class Reader {
         const textOffset = Number(progress && progress.textOffset);
         const textSnippet = String((progress && progress.textSnippet) || '').trim().slice(0, 240);
         const updatedAt = String((progress && progress.updatedAt) || '').trim();
+        const generation = Number(progress && progress.generation);
         return {
             percent: Number.isFinite(percent) ? Math.max(0, Math.min(1, percent)) : 0,
             sectionId,
@@ -9845,6 +10015,9 @@ class Reader {
             textOffset: Number.isFinite(textOffset) ? Math.max(-1, Math.round(textOffset)) : -1,
             textSnippet,
             updatedAt,
+            generation: Number.isFinite(generation)
+                ? Math.max(0, Math.round(generation))
+                : Math.max(0, Math.round(Number(this.readerProgressGeneration || 0) || 0)),
         };
     }
 
@@ -10645,6 +10818,13 @@ export default vueComponent(Reader);
     min-width: 0;
 }
 
+.reader-home-tab-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+}
+
 .reader-home-tab {
     display: inline-flex;
     align-items: center;
@@ -10680,6 +10860,12 @@ export default vueComponent(Reader);
     height: 42px;
     min-height: 42px;
     padding: 0;
+}
+
+.reader-home-reset-btn {
+    min-height: 42px;
+    padding: 6px 12px;
+    white-space: nowrap;
 }
 
 .reader-home-search-row {
@@ -10812,6 +10998,12 @@ export default vueComponent(Reader);
 .reader-home-action-btn--muted {
     background: transparent;
     color: var(--reader-muted);
+}
+
+.reader-home-action-btn--danger {
+    border-color: color-mix(in srgb, #c45143 48%, var(--reader-border));
+    background: color-mix(in srgb, #c45143 10%, var(--reader-surface-2));
+    color: color-mix(in srgb, #c45143 76%, var(--reader-text));
 }
 
 .reader-home-action-btn:hover,
@@ -12222,7 +12414,16 @@ export default vueComponent(Reader);
     background: transparent !important;
     box-shadow: none !important;
     color: var(--reader-text);
+}
+
+.reader-page--text-shadow.reader-page--transparent-status .reader-status-bar {
     text-shadow: 0 1px 2px color-mix(in srgb, var(--reader-bg) 42%, transparent);
+}
+
+.reader-page:not(.reader-page--text-shadow) .reader-body,
+.reader-page:not(.reader-page--text-shadow) .reader-page-sheet .reader-html,
+.reader-page:not(.reader-page--text-shadow) .reader-status-bar {
+    text-shadow: none !important;
 }
 
 .reader-theme-eink .reader-page-slide-x-forward-enter-active,
@@ -12371,6 +12572,24 @@ export default vueComponent(Reader);
     .reader-home-actions,
     .reader-home-book-actions {
         align-items: stretch;
+    }
+
+    .reader-home-tabs {
+        flex-wrap: wrap;
+        align-items: stretch;
+    }
+
+    .reader-home-tab-list,
+    .reader-home-tab-actions {
+        flex: 1 1 100%;
+    }
+
+    .reader-home-tab-actions {
+        justify-content: flex-end;
+    }
+
+    .reader-home-reset-btn {
+        flex: 1 1 auto;
     }
 
     .reader-home-search-row {

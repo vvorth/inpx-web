@@ -59,7 +59,7 @@
                     Отмена
                 </q-btn>
                 <q-btn class="q-px-md q-ml-sm" color="primary" dense no-caps @click="okClick">
-                    OK
+                    {{ okButtonLabel }}
                 </q-btn>
             </div>
         </div>
@@ -283,6 +283,7 @@ class StdDialog {
     noEscDismiss = false;
     noBackdropDismiss = false;
     noCancel = false;
+    okButtonLabel = 'OK';
     dialogClass = '';
     dialogStyle = null;
 
@@ -328,6 +329,7 @@ class StdDialog {
         this.noEscDismiss = (opts && opts.noEscDismiss) || false;
         this.noBackdropDismiss = (opts && opts.noBackdropDismiss) || false;
         this.noCancel = (opts && opts.noCancel) || false;
+        this.okButtonLabel = String((opts && opts.okLabel) || 'OK');
         this.dialogClass = (opts && opts.dialogClass) || '';
         this.dialogStyle = (opts && opts.dialogStyle) || null;
 

@@ -6,6 +6,8 @@ class ReadingListStore {
     constructor(config) {
         this.config = config;
         this.file = path.join(config.dataDir, 'reading-lists.json');
+        this.writeQueue = Promise.resolve();
+        this.progressMutationQueue = Promise.resolve();
     }
 
     makeDefaultData() {
@@ -96,6 +98,8 @@ class ReadingListStore {
             opdsEnabled: false,
             opdsAuthEnabled: false,
             isAdmin: true,
+            readerProgressGeneration: 0,
+            readerProgressResetAt: '',
             createdAt: now,
             updatedAt: now,
         };
@@ -352,6 +356,7 @@ class ReadingListStore {
                 textSnippet: String(row.textSnippet || '').trim().slice(0, 240),
                 updatedAt: String(row.updatedAt || '').trim(),
                 hidden: (row.hidden === true),
+                generation: Math.max(0, parseInt(row.generation, 10) || 0),
             };
         }
         return result;
@@ -439,6 +444,8 @@ class ReadingListStore {
             opdsAuthEnabled: false,
             readerPreferences: this.normalizeReaderPreferences(),
             readerProgress: {},
+            readerProgressGeneration: 0,
+            readerProgressResetAt: '',
             readerBookmarks: {},
             discoveryPreferences: this.normalizeDiscoveryPreferences(),
             createdAt: now,
@@ -487,6 +494,8 @@ class ReadingListStore {
         normalized.opdsAuthEnabled = (normalized.opdsAuthEnabled === true);
         normalized.readerPreferences = this.normalizeReaderPreferences(normalized.readerPreferences);
         normalized.readerProgress = this.normalizeReaderProgress(normalized.readerProgress);
+        normalized.readerProgressGeneration = Math.max(0, parseInt(normalized.readerProgressGeneration, 10) || 0);
+        normalized.readerProgressResetAt = String(normalized.readerProgressResetAt || '').trim();
         normalized.readerBookmarks = this.normalizeReaderBookmarks(normalized.readerBookmarks);
         normalized.discoveryPreferences = this.normalizeDiscoveryPreferences(normalized.discoveryPreferences);
         normalized.isAdmin = !!normalized.isAdmin;
@@ -661,12 +670,111 @@ class ReadingListStore {
             await fs.writeFile(`${backupFile}.error.txt`, String(error.stack || error.message));
     }
 
-    async save(data) {
+    async save(data, options = {}) {
         const out = this.normalizeData(data);
-        await this.writeData(out);
+        await this.writeData(out, options);
     }
 
-    async writeData(data) {
+    async writeData(data, options = {}) {
+        const snapshot = JSON.parse(JSON.stringify(data));
+        const prepare = async() => {
+            if (options && options.rebaseProgressGeneration === true)
+                return await this.rebaseReaderProgressGeneration(snapshot);
+            return await this.preserveReaderProgressResetState(snapshot);
+        };
+        const write = this.writeQueue.then(
+            async() => await this.writeDataNow(await prepare()),
+            async() => await this.writeDataNow(await prepare()),
+        );
+        this.writeQueue = write.catch(() => {});
+        return await write;
+    }
+
+    async rebaseReaderProgressGeneration(data) {
+        let current = null;
+        if (await fs.pathExists(this.file)) {
+            try {
+                current = JSON.parse(await fs.readFile(this.file, 'utf8'));
+            } catch (e) {
+                current = null;
+            }
+        }
+
+        const currentUsers = Array.isArray(current && current.users) ? current.users : [];
+        const targetUsers = Array.isArray(data && data.users) ? data.users : [];
+        const resetAt = this.nowIso();
+        for (const target of targetUsers) {
+            const source = currentUsers.find((item) => String(item && item.id || '') === String(target && target.id || ''));
+            const sourceGeneration = Math.max(0, parseInt(source && source.readerProgressGeneration, 10) || 0);
+            const targetGeneration = Math.max(0, parseInt(target && target.readerProgressGeneration, 10) || 0);
+            const generation = Math.max(sourceGeneration, targetGeneration) + 1;
+            target.readerProgressGeneration = generation;
+            target.readerProgressResetAt = resetAt;
+            target.readerProgress = Object.fromEntries(
+                Object.entries(this.normalizeReaderProgress(target.readerProgress))
+                    .map(([bookUid, row]) => [bookUid, Object.assign({}, row, {generation})])
+            );
+        }
+
+        return data;
+    }
+
+    async preserveReaderProgressResetState(data) {
+        if (!await fs.pathExists(this.file))
+            return data;
+
+        let current;
+        try {
+            current = JSON.parse(await fs.readFile(this.file, 'utf8'));
+        } catch (e) {
+            return data;
+        }
+
+        const currentUsers = Array.isArray(current && current.users) ? current.users : [];
+        const targetUsers = Array.isArray(data && data.users) ? data.users : [];
+        for (const target of targetUsers) {
+            const source = currentUsers.find((item) => String(item && item.id || '') === String(target && target.id || ''));
+            if (!source)
+                continue;
+
+            const sourceGeneration = Math.max(0, parseInt(source.readerProgressGeneration, 10) || 0);
+            const targetGeneration = Math.max(0, parseInt(target.readerProgressGeneration, 10) || 0);
+            if (sourceGeneration > targetGeneration) {
+                const sourceProgress = this.normalizeReaderProgress(source.readerProgress);
+                const targetProgress = this.normalizeReaderProgress(target.readerProgress);
+                target.readerProgressGeneration = sourceGeneration;
+                target.readerProgressResetAt = String(source.readerProgressResetAt || '').trim();
+                target.readerProgress = Object.assign(
+                    {},
+                    Object.fromEntries(Object.entries(sourceProgress).filter(([, row]) => row.generation >= sourceGeneration)),
+                    Object.fromEntries(Object.entries(targetProgress).filter(([, row]) => row.generation >= sourceGeneration)),
+                );
+                continue;
+            }
+
+            target.readerProgressGeneration = targetGeneration;
+            target.readerProgress = Object.fromEntries(
+                Object.entries(this.normalizeReaderProgress(target.readerProgress))
+                    .filter(([, row]) => row.generation >= targetGeneration)
+            );
+            if (sourceGeneration === targetGeneration) {
+                const sourceResetTime = Date.parse(String(source.readerProgressResetAt || '').trim());
+                const targetResetTime = Date.parse(String(target.readerProgressResetAt || '').trim());
+                if (Number.isFinite(sourceResetTime) && (!Number.isFinite(targetResetTime) || sourceResetTime > targetResetTime))
+                    target.readerProgressResetAt = String(source.readerProgressResetAt || '').trim();
+            }
+        }
+
+        return data;
+    }
+
+    async withProgressMutation(task) {
+        const mutation = this.progressMutationQueue.then(task, task);
+        this.progressMutationQueue = mutation.catch(() => {});
+        return await mutation;
+    }
+
+    async writeDataNow(data) {
         await fs.ensureDir(path.dirname(this.file));
         const tmpFile = `${this.file}.tmp-${process.pid}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
         await fs.writeFile(tmpFile, JSON.stringify(data, null, 2));
@@ -889,6 +997,8 @@ class ReadingListStore {
         return {
             preferences: this.normalizeReaderPreferences(user.readerPreferences),
             progress: Object.assign({percent: 0, sectionId: '', pageIndex: 0, textOffset: -1, textSnippet: '', updatedAt: '', hidden: false}, user.readerProgress[normalizedBookUid] || {}),
+            progressGeneration: Math.max(0, parseInt(user.readerProgressGeneration, 10) || 0),
+            progressResetAt: String(user.readerProgressResetAt || '').trim(),
             bookmarks: (user.readerBookmarks && Array.isArray(user.readerBookmarks[normalizedBookUid]) ? user.readerBookmarks[normalizedBookUid] : []),
         };
     }
@@ -934,6 +1044,12 @@ class ReadingListStore {
     }
 
     async updateReaderProgress(userId = '', bookUid = '', patch = {}) {
+        return await this.withProgressMutation(
+            async() => await this.updateReaderProgressNow(userId, bookUid, patch)
+        );
+    }
+
+    async updateReaderProgressNow(userId = '', bookUid = '', patch = {}) {
         const {data, user} = await this.resolveUser(userId);
         const target = data.users.find((item) => item.id === user.id);
         if (!target)
@@ -952,12 +1068,35 @@ class ReadingListStore {
         const pageIndex = Number(utilsHasProp(patch, 'pageIndex') ? patch.pageIndex : current.pageIndex);
         const textOffset = Number(utilsHasProp(patch, 'textOffset') ? patch.textOffset : current.textOffset);
         const textSnippet = String(utilsHasProp(patch, 'textSnippet') ? patch.textSnippet : current.textSnippet || '').trim().slice(0, 240);
-        const hidden = (utilsHasProp(patch, 'hidden') ? patch.hidden === true : false);
+        const hidden = (utilsHasProp(patch, 'hidden') ? patch.hidden === true : current.hidden === true);
         const patchUpdatedAt = String(utilsHasProp(patch, 'updatedAt') ? patch.updatedAt : '').trim();
         const currentUpdatedAt = String(current.updatedAt || '').trim();
         const patchTime = Date.parse(patchUpdatedAt);
         const currentTime = Date.parse(currentUpdatedAt);
+        const generation = Math.max(0, parseInt(target.readerProgressGeneration, 10) || 0);
+        const explicitHiddenPatch = utilsHasProp(patch, 'hidden') && !patchUpdatedAt;
+        const patchGeneration = utilsHasProp(patch, 'generation')
+            ? Math.max(0, parseInt(patch.generation, 10) || 0)
+            : (explicitHiddenPatch ? generation : 0);
+        const resetAt = String(target.readerProgressResetAt || '').trim();
         const force = patch.force === true;
+        if (patchGeneration !== generation) {
+            if (Object.keys(current).length && Math.max(0, parseInt(current.generation, 10) || 0) === generation)
+                return Object.assign({}, current, {generationMismatch: true});
+
+            return {
+                percent: 0,
+                sectionId: '',
+                pageIndex: 0,
+                textOffset: -1,
+                textSnippet: '',
+                updatedAt: resetAt,
+                hidden: false,
+                reset: true,
+                resetAt,
+                generation,
+            };
+        }
         if (
             !force
             &&
@@ -974,6 +1113,7 @@ class ReadingListStore {
             textSnippet,
             updatedAt: patchUpdatedAt || this.nowIso(),
             hidden,
+            generation,
         };
         target.updatedAt = this.nowIso();
 
@@ -982,6 +1122,12 @@ class ReadingListStore {
     }
 
     async deleteReaderProgress(userId = '', bookUid = '') {
+        return await this.withProgressMutation(
+            async() => await this.deleteReaderProgressNow(userId, bookUid)
+        );
+    }
+
+    async deleteReaderProgressNow(userId = '', bookUid = '') {
         const {data, user} = await this.resolveUser(userId);
         const target = data.users.find((item) => item.id === user.id);
         if (!target)
@@ -997,6 +1143,33 @@ class ReadingListStore {
         target.updatedAt = this.nowIso();
         await this.save(data);
         return {success: true};
+    }
+
+    async clearReaderProgress(userId = '') {
+        return await this.withProgressMutation(
+            async() => await this.clearReaderProgressNow(userId)
+        );
+    }
+
+    async clearReaderProgressNow(userId = '') {
+        const {data, user} = await this.resolveUser(userId);
+        const target = data.users.find((item) => item.id === user.id);
+        if (!target)
+            throw new Error('Пользователь не найден');
+
+        const current = (target.readerProgress && typeof(target.readerProgress) === 'object')
+            ? target.readerProgress
+            : {};
+        const bookUids = Object.keys(current);
+        const count = bookUids.length;
+        const resetAt = this.nowIso();
+        const generation = Math.max(0, parseInt(target.readerProgressGeneration, 10) || 0) + 1;
+        target.readerProgress = {};
+        target.readerProgressGeneration = generation;
+        target.readerProgressResetAt = resetAt;
+        target.updatedAt = resetAt;
+        await this.save(data);
+        return {success: true, count, resetAt, generation, bookUids};
     }
 
     async addReaderBookmark(userId = '', bookUid = '', bookmark = {}) {
@@ -1248,6 +1421,12 @@ class ReadingListStore {
     }
 
     async setBooksRead(userId = '', bookUids = [], read = true, options = {}) {
+        return await this.withProgressMutation(
+            async() => await this.setBooksReadNow(userId, bookUids, read, options)
+        );
+    }
+
+    async setBooksReadNow(userId = '', bookUids = [], read = true, options = {}) {
         const {data, user} = await this.resolveUser(userId);
         const target = data.users.find((item) => item.id === user.id);
         if (!target)
@@ -1268,6 +1447,7 @@ class ReadingListStore {
             target.readerProgress = {};
 
         const updatedAt = this.nowIso();
+        const generation = Math.max(0, parseInt(target.readerProgressGeneration, 10) || 0);
         for (const bookUid of normalizedBookUids) {
             if (read) {
                 target.readerProgress[bookUid] = {
@@ -1275,6 +1455,7 @@ class ReadingListStore {
                     sectionId: '',
                     updatedAt,
                     hidden: false,
+                    generation,
                 };
             } else {
                 delete target.readerProgress[bookUid];
@@ -1401,7 +1582,11 @@ class ReadingListStore {
                 target.discoveryPreferences = this.normalizeDiscoveryPreferences(incomingUser.discoveryPreferences);
 
             if (utilsHasProp(incomingUser, 'readerProgress')) {
-                const progress = this.normalizeReaderProgress(incomingUser.readerProgress);
+                const generation = Math.max(0, parseInt(target.readerProgressGeneration, 10) || 0);
+                const progress = Object.fromEntries(
+                    Object.entries(this.normalizeReaderProgress(incomingUser.readerProgress))
+                        .map(([bookUid, row]) => [bookUid, Object.assign({}, row, {generation})])
+                );
                 target.readerProgress = Object.assign({}, target.readerProgress || {}, progress);
                 importedProgress = Object.keys(progress).length;
             }

@@ -3076,6 +3076,7 @@ class WebWorker {
             state,
             query,
             sort,
+            progressGeneration: Math.max(0, parseInt(user && user.readerProgressGeneration, 10) || 0),
             counters,
             count: items.length,
             items: items.slice(0, limit),
@@ -4341,7 +4342,7 @@ class WebWorker {
 
             const readingLists = await readJsonEntry('reading-lists.json');
             if (readingLists && typeof readingLists === 'object') {
-                await this.readingListStore.save(readingLists);
+                await this.readingListStore.save(readingLists, {rebaseProgressGeneration: true});
                 restored.push('reading-lists.json');
             }
 
@@ -4378,6 +4379,11 @@ class WebWorker {
     async deleteReaderProgress(userId = '', bookUid = '') {
         this.checkMyState();
         return await this.readingListStore.deleteReaderProgress(userId, bookUid);
+    }
+
+    async clearReaderProgress(userId = '') {
+        this.checkMyState();
+        return await this.readingListStore.clearReaderProgress(userId);
     }
 
     async addReaderBookmark(userId = '', bookUid = '', bookmark = {}) {

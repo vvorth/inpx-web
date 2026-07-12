@@ -518,6 +518,10 @@ class Api {
         return await this.request({action: 'delete-reader-progress', bookUid}, 120);
     }
 
+    async clearReaderProgress() {
+        return await this.request({action: 'clear-reader-progress'}, 120);
+    }
+
     async updateReaderPreferences(preferences = {}, options = {}) {
         return await this.request({action: 'update-reader-preferences', preferences}, 120, options);
     }

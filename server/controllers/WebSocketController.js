@@ -177,6 +177,8 @@ class WebSocketController {
                     await this.updateReaderProgress(req, ws); break;
                 case 'delete-reader-progress':
                     await this.deleteReaderProgress(req, ws); break;
+                case 'clear-reader-progress':
+                    await this.clearReaderProgress(req, ws); break;
                 case 'update-reader-preferences':
                     await this.updateReaderPreferences(req, ws); break;
                 case 'add-reader-bookmark':
@@ -283,6 +285,7 @@ class WebSocketController {
             'import-admin-backup',
             'update-reader-progress',
             'delete-reader-progress',
+            'clear-reader-progress',
             'update-reader-preferences',
             'add-reader-bookmark',
             'delete-reader-bookmark',
@@ -642,6 +645,12 @@ class WebSocketController {
 
         const user = await this.webWorker.requireAuthorizedUser(req.userId, req.profileAccessToken);
         const result = await this.webWorker.deleteReaderProgress(user.id, req.bookUid);
+        this.send(result, req, ws);
+    }
+
+    async clearReaderProgress(req, ws) {
+        const user = await this.webWorker.requireAuthorizedUser(req.userId, req.profileAccessToken);
+        const result = await this.webWorker.clearReaderProgress(user.id);
         this.send(result, req, ws);
     }
 
