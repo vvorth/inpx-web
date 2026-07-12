@@ -169,7 +169,7 @@ async function convertWithFb2cng(inputFile, outputFile, format, converterPaths =
     const fb2cngFormat = fb2cngFormats.get(format);
     const fb2cngArgs = ['convert', '--to', fb2cngFormat, '--overwrite', inputFile, outputDir];
 
-    if (fb2cngConfigPath && externalTools.pathExistsSafe(fb2cngConfigPath))
+    if (fb2cngConfigPath && await externalTools.pathExistsSafe(fb2cngConfigPath))
         fb2cngArgs.push('--config', fb2cngConfigPath);
 
     await fs.remove(outputDir);
@@ -264,13 +264,35 @@ async function convert({inputFile, outputFile, format, sourceFileName = '', conv
     }
 }
 
+async function prepareConvertedFile({inputFile, outputFile, format, sourceFileName, downFileName, config}) {
+    const sourceExt = path.extname(sourceFileName || inputFile).toLowerCase();
+    if (!canConvertSourceTo(sourceExt, format))
+        throw new Error(`Unsupported convert format: ${sourceExt || 'unknown'} -> ${format}`);
+
+    if (!config.conversionEnabled)
+        throw new Error('Book conversion is disabled');
+
+    if (!await fs.pathExists(outputFile)) {
+        await convert({
+            inputFile,
+            outputFile,
+            format,
+            sourceFileName,
+            converterPaths: config.converterPaths,
+            fb2cngConfigPath: config.fb2cngConfigPath,
+        });
+    }
+
+    return getConvertedFileName(downFileName, format);
+}
+
 module.exports = {
     canConvertTo,
     canConvertSourceTo,
     fb2cngCommandCandidates,
     mutoolCommandCandidates,
     calibreCommandCandidates,
-    convert,
+    prepareConvertedFile,
     getConvertedFileName,
     getConvertedExtension,
 };
