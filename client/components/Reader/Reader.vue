@@ -914,21 +914,11 @@
                 :class="statusBarClass"
                 :style="statusBarStyle"
             >
-                <template v-if="showCompactPagedBuildIndicator">
-                    <q-icon class="la la-spinner icon-rotate reader-status-bar-spinner" size="14px" />
-                    <span class="reader-status-main">{{ compactStatusBarBuildText }}</span>
-                    <span v-if="activePreferences.statusBarClock" class="reader-status-clock">{{ statusClockText }}</span>
-                    <div v-if="activePreferences.statusBarProgressBar" class="reader-status-progress">
-                        <div :style="{width: `${statusBarProgressPercent}%`}"></div>
-                    </div>
-                </template>
-                <template v-else>
-                    <span class="reader-status-main">{{ compactStatusBarText }}</span>
-                    <span v-if="activePreferences.statusBarClock" class="reader-status-clock">{{ statusClockText }}</span>
-                    <div v-if="activePreferences.statusBarProgressBar" class="reader-status-progress">
-                        <div :style="{width: `${statusBarProgressPercent}%`}"></div>
-                    </div>
-                </template>
+                <span class="reader-status-main">{{ compactStatusBarText }}</span>
+                <span v-if="activePreferences.statusBarClock" class="reader-status-clock">{{ statusClockText }}</span>
+                <div v-if="activePreferences.statusBarProgressBar" class="reader-status-progress">
+                    <div :style="{width: `${statusBarProgressPercent}%`}"></div>
+                </div>
             </div>
 
             <div
@@ -1575,6 +1565,7 @@ class Reader {
     mobileSpacingControl = 'pageBottom';
     mobileSettingsPanelHeight = 0;
     touchStartPoint = null;
+    suppressSyntheticReaderClickUntil = 0;
     imageLayoutFrame = 0;
     pagedViewportFrame = 0;
     pagedViewportBuildQueued = false;
@@ -2942,7 +2933,6 @@ class Reader {
     get showCompactPagedBuildOverlay() {
         return !!(
             this.showCompactPagedBuildIndicator
-            && !this.activePreferences.showStatusBar
             && !this.controlsOpen
         );
     }
@@ -6318,6 +6308,7 @@ class Reader {
         }));
         const totalIndexes = Math.max(1, compacted.length - 1);
         let operationsSinceYield = 0;
+        let compactSliceStartedAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
         const finalizeCompactedPages = () => {
             measureHtml.innerHTML = '';
@@ -6331,11 +6322,13 @@ class Reader {
         };
 
         const maybeYield = async(index = 0, force = false) => {
-            if (jobId && jobId !== this.pagedBuildJobId)
+            if (this.pagedBuildNeedsRefresh || (jobId && jobId !== this.pagedBuildJobId))
                 return 'cancelled';
 
             operationsSinceYield += 1;
-            if (!force && operationsSinceYield < 8)
+            const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+            const sliceElapsedMs = Math.max(0, now - compactSliceStartedAt);
+            if (!force && operationsSinceYield < 48 && sliceElapsedMs < 12)
                 return '';
 
             operationsSinceYield = 0;
@@ -6345,10 +6338,12 @@ class Reader {
             this.pagedBuildProgressPercent = compactProgress;
             this.loadingMessage = `${this.uiText.loadingPagesCompacting.replace('...', '')} ${compactProgress}%`;
             await this.waitForAnimationFrames(1);
-            return jobId && jobId !== this.pagedBuildJobId ? 'cancelled' : '';
+            compactSliceStartedAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+            return (this.pagedBuildNeedsRefresh || (jobId && jobId !== this.pagedBuildJobId)) ? 'cancelled' : '';
         };
 
-        await maybeYield(0, true);
+        if (await maybeYield(0, true) === 'cancelled')
+            return null;
         for (let index = 0; index < compacted.length - 1; index += 1) {
             const yieldResult = await maybeYield(index);
             if (yieldResult === 'cancelled')
@@ -6384,7 +6379,8 @@ class Reader {
             }
         }
 
-        await maybeYield(totalIndexes, true);
+        if (await maybeYield(totalIndexes, true) === 'cancelled')
+            return null;
         return finalizeCompactedPages();
     }
 
@@ -7464,8 +7460,8 @@ class Reader {
         try {
             applyUnits([]);
             for (let index = 0; index < queue.length; index += 1) {
-                if (jobId && jobId !== this.pagedBuildJobId)
-                    return;
+                if (this.pagedBuildNeedsRefresh || (jobId && jobId !== this.pagedBuildJobId))
+                    return false;
 
                 const unit = queue[index];
                 if (unit.sectionId)
@@ -7602,7 +7598,7 @@ class Reader {
                 await maybeYield(index + 1);
             }
 
-            if (jobId && jobId !== this.pagedBuildJobId)
+            if (this.pagedBuildNeedsRefresh || (jobId && jobId !== this.pagedBuildJobId))
                 return false;
             finalizePage();
             let finalPages = (pages.length ? pages : [{
@@ -8402,8 +8398,31 @@ class Reader {
         this.saveProgressDebounced();
     }
 
+    isReaderTapInteractiveTarget(target = null) {
+        return !!(
+            target
+            && target.closest
+            && target.closest('button, a, input, textarea, select, .q-btn, .reader-dialog')
+        );
+    }
+
     handleReaderTap(event) {
-        if (!this.$refs.scroller)
+        if (
+            Date.now() < (Number(this.suppressSyntheticReaderClickUntil || 0) || 0)
+            && !this.isReaderTapInteractiveTarget(event && event.target)
+        ) {
+            if (event && event.cancelable)
+                event.preventDefault();
+            if (event && typeof event.stopPropagation === 'function')
+                event.stopPropagation();
+            return;
+        }
+
+        this.activateReaderTap(event);
+    }
+
+    activateReaderTap(event) {
+        if (!event || !this.$refs.scroller)
             return;
 
         if (this.isCompactLayout && this.controlsOpen) {
@@ -8427,12 +8446,16 @@ class Reader {
             return;
         }
 
-        if (target && target.closest && target.closest('button, a, input, textarea, select, .q-btn, .reader-dialog'))
+        if (this.isReaderTapInteractiveTarget(target))
             return;
 
         const selection = (window.getSelection ? window.getSelection().toString().trim() : '');
         if (selection)
             return;
+        const consumeCompactTap = () => {
+            if (this.isCompactLayout && event.cancelable)
+                event.preventDefault();
+        };
 
         const rect = this.$refs.scroller.getBoundingClientRect();
         const relX = (event.clientX - rect.left) / rect.width;
@@ -8440,19 +8463,23 @@ class Reader {
         if (this.isPagedMode) {
             if (this.isHorizontalPaged) {
                 if (relX <= 0.22) {
+                    consumeCompactTap();
                     this.goToRelativePage(-1);
                     return;
                 }
                 if (relX >= 0.78) {
+                    consumeCompactTap();
                     this.goToRelativePage(1);
                     return;
                 }
             } else {
                 if (relY <= 0.22) {
+                    consumeCompactTap();
                     this.goToRelativePage(-1);
                     return;
                 }
                 if (relY >= 0.78) {
+                    consumeCompactTap();
                     this.goToRelativePage(1);
                     return;
                 }
@@ -8462,6 +8489,7 @@ class Reader {
         if (!isCenterTap)
             return;
 
+        consumeCompactTap();
         this.toggleCompactChromeVisibility();
     }
 
@@ -8569,29 +8597,59 @@ class Reader {
     }
 
     handleReaderTouchStart(event) {
-        if (!this.isPagedMode || !event || !event.touches || event.touches.length !== 1)
+        if ((!this.isCompactLayout && !this.isPagedMode) || !event || !event.touches || event.touches.length !== 1)
             return;
 
         const touch = event.touches[0];
         this.touchStartPoint = {
             x: Number(touch.clientX || 0) || 0,
             y: Number(touch.clientY || 0) || 0,
+            startedAt: Date.now(),
         };
     }
 
     handleReaderTouchEnd(event) {
-        if (!this.isPagedMode || !this.touchStartPoint || !event || !event.changedTouches || !event.changedTouches.length)
+        if ((!this.isCompactLayout && !this.isPagedMode) || !this.touchStartPoint || !event || !event.changedTouches || !event.changedTouches.length)
             return;
 
         const touch = event.changedTouches[0];
         const deltaX = (Number(touch.clientX || 0) || 0) - this.touchStartPoint.x;
         const deltaY = (Number(touch.clientY || 0) || 0) - this.touchStartPoint.y;
+        const touchDurationMs = Math.max(0, Date.now() - (Number(this.touchStartPoint.startedAt || 0) || Date.now()));
         this.touchStartPoint = null;
 
-        const threshold = 36;
+        const tapThreshold = 12;
+        const swipeThreshold = 36;
         const absX = Math.abs(deltaX);
         const absY = Math.abs(deltaY);
-        if (absX < threshold && absY < threshold)
+        if (absX < tapThreshold && absY < tapThreshold) {
+            if (!this.isCompactLayout || touchDurationMs > 420 || this.isReaderTapInteractiveTarget(event.target))
+                return;
+
+            const selection = (window.getSelection ? window.getSelection().toString().trim() : '');
+            if (selection)
+                return;
+
+            if (event.cancelable)
+                event.preventDefault();
+            this.activateReaderTap({
+                target: event.target,
+                clientX: Number(touch.clientX || 0) || 0,
+                clientY: Number(touch.clientY || 0) || 0,
+                cancelable: false,
+                preventDefault: () => {},
+                stopPropagation: () => {
+                    if (typeof event.stopPropagation === 'function')
+                        event.stopPropagation();
+                },
+            });
+            this.suppressSyntheticReaderClickUntil = Date.now() + 700;
+            return;
+        }
+
+        if (!this.isPagedMode)
+            return;
+        if (absX < swipeThreshold && absY < swipeThreshold)
             return;
 
         if (absX >= absY) {
@@ -11401,6 +11459,7 @@ export default vueComponent(Reader);
 
 .reader-compact-build-overlay .reader-status-bar {
     width: min(100%, 520px);
+    flex-wrap: nowrap;
 }
 
 .reader-desktop-footer {
@@ -11525,6 +11584,10 @@ export default vueComponent(Reader);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.reader-mobile-footer .reader-status-main {
+    flex-basis: 0;
 }
 
 .reader-status-clock {
