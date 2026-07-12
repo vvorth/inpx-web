@@ -1536,6 +1536,7 @@ import he from 'he';
 
 const readerPreferencesStorageKey = 'inpx.reader.preferences.v1';
 const readerProgressStorageKey = 'inpx.reader.progress.v1';
+const readerPreferencesVersion = 2;
 const readerDeviceProfileKeys = ['regularProfile', 'compactProfile'];
 const readerDeviceScopedPreferenceKeys = new Set([
     'readMode',
@@ -1651,6 +1652,7 @@ class Reader {
         sectionId: '',
     };
     preferences = {
+        readerPreferencesVersion,
         theme: 'dark',
         readMode: 'scroll',
         pagedNavigation: 'tap',
@@ -8400,7 +8402,7 @@ class Reader {
                     continue;
 
                 const anchorAttribute = notesAnchorAdded ? '' : ` id="${this.escapeHtml(notesAnchorId)}"`;
-                parts.push(`<section${anchorAttribute} class="reader-notes"><h2>Примечания</h2>${html}</section>`);
+                parts.push(`<section class="reader-notes"><h2${anchorAttribute}>Примечания</h2>${html}</section>`);
                 notesAnchorAdded = true;
             } else {
                 parts.push(`<section class="reader-section">${html}</section>`);
@@ -10072,7 +10074,7 @@ class Reader {
         if (!preferences || typeof preferences !== 'object')
             return this.preferences;
 
-        const normalized = this.normalizeReaderSpacingPreferences(preferences);
+        const normalized = this.normalizeReaderSpacingPreferences(this.migrateReaderPreferences(preferences));
         const nextPreferences = Object.assign({}, this.preferences, normalized, {
             einkProfile: Object.assign(
                 {},
@@ -10084,6 +10086,20 @@ class Reader {
         if (nextPreferences.einkProfile)
             this.mergeReaderDeviceProfiles(nextPreferences.einkProfile, this.preferences.einkProfile || {}, normalized.einkProfile || {});
         return nextPreferences;
+    }
+
+    migrateReaderPreferences(preferences = {}) {
+        if (!preferences || typeof preferences !== 'object')
+            return {};
+
+        const next = _.cloneDeep(preferences);
+        const version = Math.max(0, parseInt(next.readerPreferencesVersion, 10) || 0);
+        if (version < readerPreferencesVersion) {
+            next.textShadow = false;
+            next.einkProfile = Object.assign({}, next.einkProfile || {}, {textShadow: false});
+        }
+        next.readerPreferencesVersion = readerPreferencesVersion;
+        return next;
     }
 
     normalizeReaderSpacingPreferences(preferences = {}) {
@@ -10140,8 +10156,11 @@ class Reader {
 
     applyReaderPreferences(preferences = {}, options = {}) {
         const nextPreferences = this.mergeReaderPreferences(preferences);
-        if (_.isEqual(nextPreferences, this.preferences))
+        if (_.isEqual(nextPreferences, this.preferences)) {
+            if (options.persistLocal)
+                this.writeStoredReaderPreferences();
             return;
+        }
 
         this.preferences = nextPreferences;
         if (options.persistLocal)
@@ -10151,7 +10170,7 @@ class Reader {
     applyStoredReaderPreferences() {
         const preferences = this.readStoredReaderPreferences();
         if (preferences)
-            this.applyReaderPreferences(preferences);
+            this.applyReaderPreferences(preferences, {persistLocal: true});
     }
 
     readStoredReaderPreferences() {
@@ -11211,8 +11230,8 @@ export default vueComponent(Reader);
     align-items: center;
 }
 
-.reader-home-search :deep(.q-field__control),
-.reader-home-sort :deep(.q-field__control) {
+.reader-page .reader-home-search :deep(.q-field__control),
+.reader-page .reader-home-sort :deep(.q-field__control) {
     min-height: 42px;
     border-radius: 8px;
     background: var(--reader-surface);

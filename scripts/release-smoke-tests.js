@@ -298,6 +298,8 @@ async function testReaderBookNotesMenuAndReturnLayout() {
     });
     assert.strictEqual(notesBuilder.readerNotesAnchorId, 'reader-book-notes');
     assert.strictEqual((notesHtml.match(/id="reader-book-notes"/g) || []).length, 1);
+    assert.match(notesHtml, /<section class="reader-notes"><h2 id="reader-book-notes">Примечания<\/h2>/);
+    assert.doesNotMatch(notesHtml, /<section id="reader-book-notes" class="reader-notes">/);
     assert.strictEqual((notesHtml.match(/class="reader-notes"/g) || []).length, 2);
 
     const emptyNotesBuilder = new NotesBuilder();
@@ -355,10 +357,38 @@ async function testReaderBookNotesMenuAndReturnLayout() {
 
 async function testReaderTextShadowDefaultsOff() {
     const readerSource = await fs.readFile(path.resolve(__dirname, '../client/components/Reader/Reader.vue'), 'utf8');
+    const ReadingListStore = require('../server/core/ReadingListStore');
+    const store = new ReadingListStore({dataDir: path.resolve(__dirname, '../.tmp-reader-preferences-test')});
+    const defaults = store.normalizeReaderPreferences();
+    const legacy = store.normalizeReaderPreferences({
+        textShadow: true,
+        einkProfile: {textShadow: true},
+    });
+    const explicit = store.normalizeReaderPreferences({
+        readerPreferencesVersion: 2,
+        textShadow: true,
+        einkProfile: {textShadow: true},
+    });
 
-    assert.strictEqual((readerSource.match(/textShadow: false,/g) || []).length, 2);
-    assert.strictEqual((readerSource.match(/textShadow: true,/g) || []).length, 0);
+    assert.strictEqual(defaults.readerPreferencesVersion, 2);
+    assert.strictEqual(defaults.textShadow, false);
+    assert.strictEqual(defaults.einkProfile.textShadow, false);
+    assert.strictEqual(legacy.textShadow, false);
+    assert.strictEqual(legacy.einkProfile.textShadow, false);
+    assert.strictEqual(explicit.textShadow, true);
+    assert.strictEqual(explicit.einkProfile.textShadow, true);
+    assert.match(readerSource, /const readerPreferencesVersion = 2;/);
+    assert.match(readerSource, /normalizeReaderSpacingPreferences\(this\.migrateReaderPreferences\(preferences\)\)/);
     assert.match(readerSource, /defaultReaderPreferences = _\.cloneDeep\(this\.preferences\);/);
+}
+
+async function testReaderHomeFieldsIgnoreGlobalDarkTheme() {
+    const readerSource = await fs.readFile(path.resolve(__dirname, '../client/components/Reader/Reader.vue'), 'utf8');
+
+    assert.match(
+        readerSource,
+        /\.reader-page \.reader-home-search :deep\(\.q-field__control\),\s*\.reader-page \.reader-home-sort :deep\(\.q-field__control\) \{[\s\S]{0,180}background: var\(--reader-surface\);/
+    );
 }
 
 async function testReaderImageDataUrlsAreValidated() {
@@ -1044,6 +1074,7 @@ const tests = [
     testReaderAnnotationStaysOutsideReadingFlow,
     testReaderBookNotesMenuAndReturnLayout,
     testReaderTextShadowDefaultsOff,
+    testReaderHomeFieldsIgnoreGlobalDarkTheme,
     testReaderImageDataUrlsAreValidated,
     testConvertedBookFileNames,
     testAdminSettingsRestoreKeepsSecrets,

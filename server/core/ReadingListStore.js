@@ -2,6 +2,8 @@ const fs = require('fs-extra');
 const path = require('path');
 const crypto = require('crypto');
 
+const readerPreferencesVersion = 2;
+
 class ReadingListStore {
     constructor(config) {
         this.config = config;
@@ -147,7 +149,7 @@ class ReadingListStore {
             fontFamily: (['serif', 'sans', 'mono', 'system'].includes(fontFamily) ? fontFamily : 'serif'),
             fontSize: Math.max(14, Math.min(30, parseInt(setting('fontSize', 18), 10) || 18)),
             lineHeight: Math.max(1.15, Math.min(2.2, Number(setting('lineHeight', 1.7)) || 1.7)),
-            textShadow: (value.textShadow !== false),
+            textShadow: (setting('textShadow', false) === true),
             contentWidth: Math.max(480, Math.min(2200, parseInt(setting('contentWidth', 1040), 10) || 1040)),
             contentWidthMode: (contentWidthMode === 'viewport' ? 'viewport' : 'fixed'),
             backgroundImage: String(setting('backgroundImage', '') || '').trim(),
@@ -226,6 +228,14 @@ class ReadingListStore {
     }
 
     normalizeReaderPreferences(value = {}) {
+        const source = (value && typeof(value) === 'object') ? value : {};
+        const sourceVersion = Math.max(0, parseInt(source.readerPreferencesVersion, 10) || 0);
+        const preferences = (sourceVersion < readerPreferencesVersion)
+            ? Object.assign({}, source, {
+                textShadow: false,
+                einkProfile: Object.assign({}, source.einkProfile || {}, {textShadow: false}),
+            })
+            : source;
         const defaults = {
             readMode: 'scroll',
             pagedNavigation: 'tap',
@@ -242,7 +252,7 @@ class ReadingListStore {
             fontFamily: 'serif',
             fontSize: 18,
             lineHeight: 1.7,
-            textShadow: true,
+            textShadow: false,
             contentWidth: 1040,
             contentWidthMode: 'fixed',
             backgroundImage: '',
@@ -280,7 +290,7 @@ class ReadingListStore {
             fontFamily: 'serif',
             fontSize: 19,
             lineHeight: 1.8,
-            textShadow: true,
+            textShadow: false,
             contentWidth: 920,
             contentWidthMode: 'fixed',
             backgroundImage: '',
@@ -302,15 +312,16 @@ class ReadingListStore {
             einkPaperTone: 94,
             einkInkTone: 10,
         };
-        const einkProfile = this.normalizeReaderRuntimeSettings(value.einkProfile || {}, einkDefaults);
-        einkProfile.regularProfile = this.normalizeReaderDeviceSettings((value.einkProfile || {}).regularProfile || {}, einkDefaults);
-        einkProfile.compactProfile = this.normalizeReaderDeviceSettings((value.einkProfile || {}).compactProfile || {}, einkDefaults);
+        const einkProfile = this.normalizeReaderRuntimeSettings(preferences.einkProfile || {}, einkDefaults);
+        einkProfile.regularProfile = this.normalizeReaderDeviceSettings((preferences.einkProfile || {}).regularProfile || {}, einkDefaults);
+        einkProfile.compactProfile = this.normalizeReaderDeviceSettings((preferences.einkProfile || {}).compactProfile || {}, einkDefaults);
 
         return {
-            theme: this.normalizeReaderTheme(value.theme),
-            ...this.normalizeReaderRuntimeSettings(value, defaults),
-            regularProfile: this.normalizeReaderDeviceSettings(value.regularProfile || {}, defaults),
-            compactProfile: this.normalizeReaderDeviceSettings(value.compactProfile || {}, defaults),
+            readerPreferencesVersion,
+            theme: this.normalizeReaderTheme(preferences.theme),
+            ...this.normalizeReaderRuntimeSettings(preferences, defaults),
+            regularProfile: this.normalizeReaderDeviceSettings(preferences.regularProfile || {}, defaults),
+            compactProfile: this.normalizeReaderDeviceSettings(preferences.compactProfile || {}, defaults),
             einkProfile,
         };
     }
