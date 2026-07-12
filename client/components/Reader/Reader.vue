@@ -949,7 +949,14 @@
                 :class="statusBarClass"
                 :style="statusBarStyle"
             >
-                <span class="reader-status-main">{{ compactStatusBarText }}</span>
+                <q-icon
+                    v-if="showCompactPagedBuildIndicator"
+                    class="la la-spinner icon-rotate reader-status-bar-spinner"
+                    size="14px"
+                />
+                <span class="reader-status-main">
+                    {{ showCompactPagedBuildIndicator ? compactStatusBarBuildText : compactStatusBarText }}
+                </span>
                 <span v-if="activePreferences.statusBarClock" class="reader-status-clock">{{ statusClockText }}</span>
                 <div v-if="activePreferences.statusBarProgressBar" class="reader-status-progress">
                     <div :style="{width: `${statusBarProgressPercent}%`}"></div>
@@ -2909,10 +2916,6 @@ class Reader {
         if (!page)
             return '';
 
-        const overrideHtml = this.renderReflowPageStartOverride(page, pageIndex);
-        if (overrideHtml)
-            return overrideHtml;
-
         if (!this.searchQuery.trim() || !this.hasSearchResults)
             return page.html || '';
 
@@ -2992,6 +2995,7 @@ class Reader {
     get showCompactPagedBuildOverlay() {
         return !!(
             this.showCompactPagedBuildIndicator
+            && !this.showCompactStatusBar
             && !this.controlsOpen
         );
     }
