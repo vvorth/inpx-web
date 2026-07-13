@@ -584,6 +584,11 @@ function normalizeDiscoveryText(value) {
         .trim();
 }
 
+function isSensitiveDiscoveryGenre(value = '') {
+    const normalized = String(value || '').trim().toLowerCase();
+    return /(?:erotic|erotica|sex|adult|porn|hentai|bdsm|18\+|эрот|секс|порн|интим)/i.test(normalized);
+}
+
 function extractDiscoveryAuthorTokens(author = '') {
     return Array.from(new Set(
         normalizeDiscoveryText(author)
@@ -1147,12 +1152,13 @@ class WebWorker {
                 reasons.push(ageLabel);
         } else if (mode === 'popular') {
             if (popularityInfo) {
-                if (popularityInfo.progressCount > 0)
-                    reasons.push(`В чтении: ${popularityInfo.progressCount}`);
-                if (popularityInfo.listCount > 0)
-                    reasons.push(`В списках: ${popularityInfo.listCount}`);
-                if (popularityInfo.finishedCount > 0)
-                    reasons.push(`Прочитано: ${popularityInfo.finishedCount}`);
+                const hasReaderActivity = (
+                    popularityInfo.progressCount > 0
+                    || popularityInfo.listCount > 0
+                    || popularityInfo.finishedCount > 0
+                );
+                if (hasReaderActivity)
+                    reasons.push('Популярно у читателей');
             }
             if (book.librate)
                 reasons.push(`Оценка библиотеки ${book.librate}/5`);
@@ -2467,7 +2473,6 @@ class WebWorker {
                 candidates.push({
                     bookUid: entry.bookUid,
                     read: !!entry.read,
-                    listName: String(list.name || '').trim() || '\u0421\u043f\u0438\u0441\u043e\u043a \u0447\u0442\u0435\u043d\u0438\u044f',
                     updatedAt: String(list.updatedAt || list.createdAt || ''),
                     order: index,
                 });
@@ -2497,9 +2502,8 @@ class WebWorker {
                 continue;
 
             seenBookUids.add(item.bookUid);
-            const updatedLabel = this.formatPersonalDiscoveryDate(item.updatedAt);
             items.push(Object.assign({}, book, {
-                discoveryReason: `\u0418\u0437 \u0441\u043f\u0438\u0441\u043a\u0430 \u00ab${item.listName}\u00bb${item.read ? ' \u00b7 \u0423\u0436\u0435 \u043e\u0442\u043c\u0435\u0447\u0435\u043d\u0430 \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u043e\u0439' : ' \u00b7 \u0415\u0449\u0451 \u043d\u0435 \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u0430'}${updatedLabel ? ` \u00b7 \u041e\u0431\u043d\u043e\u0432\u043b\u0451\u043d ${updatedLabel}` : ''}`,
+                discoveryReason: '\u041d\u0430 \u043e\u0441\u043d\u043e\u0432\u0435 \u0432\u0430\u0448\u0435\u0439 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0438',
                 discoveryRead: (item.read || readBookUids.has(item.bookUid)),
             }));
 
@@ -2677,6 +2681,12 @@ class WebWorker {
         const feedback = (discoveryPreferences.feedback && typeof(discoveryPreferences.feedback) === 'object'
             ? discoveryPreferences.feedback
             : {});
+        const ignoredTasteBookUids = new Set(
+            Object.entries(feedback)
+                .filter(([, item]) => String(item && item.kind || '').trim().toLowerCase() === 'ignore_for_taste')
+                .map(([bookUid]) => String(bookUid || '').trim())
+                .filter(Boolean)
+        );
         const discoveryEvents = (discoveryPreferences.events && typeof(discoveryPreferences.events) === 'object'
             ? discoveryPreferences.events
             : {});
@@ -2736,7 +2746,7 @@ class WebWorker {
             if (!normalizedBookUid)
                 return;
             profile.knownBookUids.add(normalizedBookUid);
-            if (!Number(amount) || hiddenBookUids.has(normalizedBookUid))
+            if (!Number(amount) || hiddenBookUids.has(normalizedBookUid) || ignoredTasteBookUids.has(normalizedBookUid))
                 return;
 
             const current = signals.get(normalizedBookUid) || {amount: 0, stamp: ''};
@@ -2774,7 +2784,7 @@ class WebWorker {
         const applyRejectedBook = (book, kind = 'not_interested') => {
             if (!book)
                 return;
-            if (kind === 'already_read' || kind === 'more_like_this')
+            if (kind === 'already_read' || kind === 'more_like_this' || kind === 'ignore_for_taste')
                 return;
 
             const authorAmount = (kind === 'dislike_author' ? 4 : (kind === 'dislike_genre' ? 0.15 : 1.5));
@@ -2958,6 +2968,21 @@ class WebWorker {
             .reduce((sum, char) => ((sum * 33) + char.charCodeAt(0) + numericSeed) % 9973, numericSeed);
         score += (stableHash / 9973) * 10;
         return Math.max(0, score);
+    }
+
+    getPersonalDiscoveryGenreReason(genres = [], profile = {}) {
+        const matchedGenres = (Array.isArray(genres) ? genres : [])
+            .map(genre => String(genre || '').trim())
+            .filter(Boolean);
+        if (!matchedGenres.length)
+            return '';
+        if (matchedGenres.some(isSensitiveDiscoveryGenre))
+            return '\u0423\u0447\u0438\u0442\u044b\u0432\u0430\u0435\u0442 \u0432\u0430\u0448\u0438 \u0447\u0438\u0442\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0435 \u0438\u043d\u0442\u0435\u0440\u0435\u0441\u044b';
+
+        const explicitGenres = (profile.explicitTasteGenres instanceof Set ? profile.explicitTasteGenres : new Set());
+        return matchedGenres.some(genre => explicitGenres.has(genre.toLowerCase()))
+            ? `\u0412\u044b \u0432\u044b\u0431\u0440\u0430\u043b\u0438 \u0436\u0430\u043d\u0440: ${matchedGenres.slice(0, 2).join(', ')}`
+            : `\u041f\u043e\u0445\u043e\u0436\u0438\u0435 \u0436\u0430\u043d\u0440\u044b: ${matchedGenres.slice(0, 2).join(', ')}`;
     }
 
     async buildSimilarBooksShelfV2(user = null, limit = 8, context = null) {
@@ -3178,10 +3203,9 @@ class WebWorker {
                 .map(item => item.trim())
                 .filter(Boolean)
                 .filter((genre) => profile.genreWeights.has(String(genre || '').trim().toLowerCase()));
-            if (matchedGenres.length)
-                reasons.push(matchedGenres.some(genre => profile.explicitTasteGenres.has(String(genre || '').trim().toLowerCase()))
-                    ? `\u0412\u044b \u0432\u044b\u0431\u0440\u0430\u043b\u0438 \u0436\u0430\u043d\u0440: ${matchedGenres.slice(0, 2).join(', ')}`
-                    : `\u041f\u043e\u0445\u043e\u0436\u0438\u0435 \u0436\u0430\u043d\u0440\u044b: ${matchedGenres.slice(0, 2).join(', ')}`);
+            const genreReason = this.getPersonalDiscoveryGenreReason(matchedGenres, profile);
+            if (genreReason)
+                reasons.push(genreReason);
 
             const matchedKeywords = this.getPersonalDiscoveryFeatureKeys(book.keywords, 'keywords')
                 .filter(keyword => profile.keywordWeights.has(keyword));

@@ -339,6 +339,7 @@ class ReadingListStore {
             'dislike_author',
             'dislike_genre',
             'already_read',
+            'ignore_for_taste',
         ];
         const normalizeCounts = (row = {}) => Object.fromEntries(
             validMetricKeys.map(key => [key, Math.max(0, Math.min(1000000000, parseInt(row && row[key], 10) || 0))])
@@ -376,6 +377,7 @@ class ReadingListStore {
             'dislike_author',
             'dislike_genre',
             'already_read',
+            'ignore_for_taste',
         ]);
         const feedback = Object.fromEntries(
             Object.entries(value.feedback && typeof(value.feedback) === 'object' ? value.feedback : {})
@@ -1169,6 +1171,7 @@ class ReadingListStore {
                 'dislike_author',
                 'dislike_genre',
                 'already_read',
+                'ignore_for_taste',
             ]);
             for (const item of patch.feedbackSet.slice(0, 200)) {
                 const bookUid = this.normalizeBookUid(item && (item.bookUid || item._uid));
@@ -1186,7 +1189,7 @@ class ReadingListStore {
                 };
                 incrementMetric('feedback');
                 incrementMetric(kind);
-                if (kind === 'more_like_this')
+                if (kind === 'more_like_this' || kind === 'ignore_for_taste')
                     hiddenBooks = hiddenBooks.filter(hiddenBookUid => hiddenBookUid !== bookUid);
                 else if (!hiddenBooks.includes(bookUid))
                     hiddenBooks.push(bookUid);

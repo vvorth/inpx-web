@@ -236,6 +236,9 @@
                             <button type="button" class="action-split-item" @click.stop.prevent="selectDiscoveryFeedback('already_read')">
                                 {{ alreadyReadLabel }}
                             </button>
+                            <button type="button" class="action-split-item" @click.stop.prevent="selectDiscoveryFeedback('ignore_for_taste')">
+                                {{ ignoreForTasteLabel }}
+                            </button>
                         </div>
                     </div>
 
@@ -673,9 +676,29 @@ class BookView {
     get effectiveDiscoveryReason() {
         let result = String(this.book && this.book.discoveryReason || '').trim();
         const genreMap = (this.genreMap instanceof Map ? this.genreMap : new Map());
-        for (const code of String(this.book && this.book.genre || '').split(',').map(item => item.trim()).filter(Boolean)) {
+        const genreCodes = String(this.book && this.book.genre || '').split(',').map(item => item.trim()).filter(Boolean);
+        const hasSensitiveGenre = genreCodes.some((code) => {
+            const label = String(genreMap.get(code) || '');
+            return /(?:erotic|erotica|sex|adult|porn|hentai|bdsm|18\+|эрот|секс|порн|интим)/i.test(`${code} ${label}`);
+        });
+        const parts = result.split(/\s+·\s+/).map(item => item.trim()).filter(Boolean);
+        const hasActivityCounters = parts.some(part => /^(?:В чтении|В списках|Прочитано):\s*\d+$/i.test(part));
+        result = parts
+            .filter(part => !/^(?:В чтении|В списках|Прочитано):\s*\d+$/i.test(part))
+            .map((part) => {
+                if (/^Из списка «[^»]+»/i.test(part))
+                    return 'На основе вашей библиотеки';
+                if (hasSensitiveGenre && /^(?:Вы выбрали жанр|Похожие жанры):/i.test(part))
+                    return 'Учитывает ваши читательские интересы';
+                return part;
+            });
+        if (hasActivityCounters)
+            result.unshift('Популярно у читателей');
+        result = Array.from(new Set(result)).join(' · ');
+
+        for (const code of genreCodes) {
             const label = genreMap.get(code);
-            if (label)
+            if (label && !hasSensitiveGenre)
                 result = result.replace(new RegExp(`\\b${code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g'), label);
         }
         return result;
@@ -695,6 +718,10 @@ class BookView {
 
     get alreadyReadLabel() {
         return '\u0423\u0436\u0435 \u0447\u0438\u0442\u0430\u043b';
+    }
+
+    get ignoreForTasteLabel() {
+        return '\u041d\u0435 \u0443\u0447\u0438\u0442\u044b\u0432\u0430\u0442\u044c \u0432 \u043c\u043e\u0438\u0445 \u0432\u043a\u0443\u0441\u0430\u0445';
     }
 
     get effectiveDiscoveryRestoreLabel() {

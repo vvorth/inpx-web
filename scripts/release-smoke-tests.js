@@ -413,7 +413,9 @@ async function testReaderTextShadowDefaultsOff() {
     assert.strictEqual(legacy.einkProfile.textShadow, false);
     assert.strictEqual(explicit.textShadow, true);
     assert.strictEqual(explicit.einkProfile.textShadow, true);
-    assert.match(readerSource, /const readerPreferencesVersion = 2;/);
+    assert.match(readerSource, /const readerPreferencesVersion = 3;/);
+    assert.match(readerSource, /version < 2[\s\S]{0,180}next\.textShadow = false;/);
+    assert.match(readerSource, /version < 3[\s\S]{0,500}next\.contentWidthMode = 'viewport';/);
     assert.match(readerSource, /normalizeReaderSpacingPreferences\(this\.migrateReaderPreferences\(preferences\)\)/);
     assert.match(readerSource, /defaultReaderPreferences = _\.cloneDeep\(this\.preferences\);/);
 }
@@ -1131,12 +1133,15 @@ async function testDiscoveryFeedbackAndEventsPersist() {
                 {bookUid: 'book:liked', kind: 'more_like_this', shelfId: 'similar-books'},
                 {bookUid: 'book:author', kind: 'dislike_author', shelfId: 'similar-books'},
                 {bookUid: 'book:read', kind: 'already_read', shelfId: 'similar-books'},
+                {bookUid: 'book:ignored-taste', kind: 'ignore_for_taste', shelfId: 'similar-books'},
             ],
         });
         assert.strictEqual(preferences.feedback['book:liked'].kind, 'more_like_this');
         assert.ok(!preferences.hiddenBooks.includes('book:liked'));
         assert.ok(preferences.hiddenBooks.includes('book:author'));
         assert.ok(preferences.hiddenBooks.includes('book:read'));
+        assert.strictEqual(preferences.feedback['book:ignored-taste'].kind, 'ignore_for_taste');
+        assert.ok(!preferences.hiddenBooks.includes('book:ignored-taste'));
         assert.deepStrictEqual(preferences.taste.genres, ['sf_fantasy']);
         assert.deepStrictEqual(preferences.taste.authors, ['Favorite Author']);
         assert.strictEqual(preferences.taste.explorationRatio, 0.25);
@@ -1158,7 +1163,8 @@ async function testDiscoveryFeedbackAndEventsPersist() {
         const metrics = await store.getDiscoveryMetrics();
         assert.strictEqual(metrics.totals.impression, 2);
         assert.strictEqual(metrics.totals.open, 1);
-        assert.strictEqual(metrics.totals.feedback, 3);
+        assert.strictEqual(metrics.totals.feedback, 4);
+        assert.strictEqual(metrics.totals.ignore_for_taste, 1);
         assert.strictEqual(metrics.shelves['similar-books'].impression, 2);
         assert.strictEqual(metrics.rates.ctr, 0.5);
         assert.strictEqual(metrics.configuredProfiles, 1);
@@ -1211,6 +1217,22 @@ async function testPersonalDiscoveryUsesColdStartTaste() {
     assert.ok(worker.scorePersonalDiscoveryExplorationCandidate({
         _uid: 'explore', author: 'New Author', genre: 'history', lang: 'ru', title: 'Explore', librate: 5,
     }, profile, 5) > 0);
+
+    assert.strictEqual(
+        worker.getPersonalDiscoveryGenreReason(['love_erotica'], profile),
+        'Учитывает ваши читательские интересы'
+    );
+    assert.strictEqual(
+        worker.getPersonalDiscoveryGenreReason(['sf_fantasy'], profile),
+        'Вы выбрали жанр: sf_fantasy'
+    );
+
+    const popular = worker.decorateDiscoveryBook({librate: 4}, {
+        mode: 'popular',
+        popularityInfo: {progressCount: 2, listCount: 1, finishedCount: 3},
+    });
+    assert.strictEqual(popular.discoveryReason, 'Популярно у читателей · Оценка библиотеки 4/5');
+    assert.ok(!/В списках|В чтении|Прочитано/.test(popular.discoveryReason));
 }
 
 async function testPersonalDiscoveryUsesEngagementTopicsAndDismissals() {
@@ -1225,6 +1247,9 @@ async function testPersonalDiscoveryUsesEngagementTopicsAndDismissals() {
         dismissed: {
             _uid: 'dismissed', author: 'Dismissed Author', genre: 'sf_horror', keywords: 'grim', lang: 'ru',
         },
+        ignored: {
+            _uid: 'ignored', author: 'Ignored Author', genre: 'history', keywords: 'rome', lang: 'ru',
+        },
     };
     worker.readingListStore = {
         getLists: async() => [],
@@ -1234,10 +1259,16 @@ async function testPersonalDiscoveryUsesEngagementTopicsAndDismissals() {
 
     const profile = await worker.buildPersonalDiscoveryTasteProfile({
         id: 'reader',
-        discoveryPreferences: {hiddenBooks: ['dismissed']},
+        discoveryPreferences: {
+            hiddenBooks: ['dismissed'],
+            feedback: {
+                ignored: {kind: 'ignore_for_taste', updatedAt: '2024-01-03T00:00:00.000Z'},
+            },
+        },
         readerProgress: {
             glance: {percent: 0.01, updatedAt: '2024-01-01T00:00:00.000Z'},
             favorite: {percent: 1, updatedAt: '2024-01-02T00:00:00.000Z'},
+            ignored: {percent: 1, updatedAt: '2024-01-03T00:00:00.000Z'},
         },
     }, {lists: []});
 
@@ -1247,6 +1278,10 @@ async function testPersonalDiscoveryUsesEngagementTopicsAndDismissals() {
     assert.ok(profile.keywordWeights.get('magic') > 0);
     assert.ok(profile.rejectedAuthorWeights.get('dismissed author') > 0);
     assert.ok(profile.knownBookUids.has('glance'));
+    assert.ok(profile.knownBookUids.has('ignored'));
+    assert.strictEqual(profile.authorWeights.has('ignored author'), false);
+    assert.strictEqual(profile.genreWeights.has('history'), false);
+    assert.strictEqual(profile.rejectedAuthorWeights.has('ignored author'), false);
 
     const topicalScore = worker.scorePersonalDiscoveryCandidate({
         _uid: 'topic', author: 'New Author', genre: 'sf_fantasy', keywords: 'dragons', lang: 'ru',

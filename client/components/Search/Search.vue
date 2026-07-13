@@ -1964,6 +1964,7 @@ class Search {
                 dislike_author: 'Автор будет реже появляться в рекомендациях.',
                 dislike_genre: 'Этот жанр будет реже появляться в рекомендациях.',
                 already_read: 'Книга убрана из рекомендаций.',
+                ignore_for_taste: 'Книга больше не влияет на ваши вкусы и остаётся доступной в библиотеке.',
                 not_interested: 'Книга скрыта из персональных витрин.',
             };
             this.$root.notify.success(messages[kind] || messages.not_interested);

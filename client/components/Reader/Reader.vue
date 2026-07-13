@@ -1535,7 +1535,7 @@ import he from 'he';
 
 const readerPreferencesStorageKey = 'inpx.reader.preferences.v1';
 const readerProgressStorageKey = 'inpx.reader.progress.v1';
-const readerPreferencesVersion = 2;
+const readerPreferencesVersion = 3;
 const readerDeviceProfileKeys = ['regularProfile', 'compactProfile'];
 const readerDeviceScopedPreferenceKeys = new Set([
     'readMode',
@@ -1670,7 +1670,7 @@ class Reader {
         lineHeight: 1.7,
         textShadow: false,
         contentWidth: 1040,
-        contentWidthMode: 'fixed',
+        contentWidthMode: 'viewport',
         backgroundImage: '',
         backgroundImageName: '',
         backgroundTransparentPages: false,
@@ -2234,7 +2234,7 @@ class Reader {
             prefs.fontFamily || 'serif',
             prefs.fontSize || 18,
             prefs.contentWidth || 1040,
-            prefs.contentWidthMode || 'fixed',
+            prefs.contentWidthMode || 'viewport',
             prefs.pagedSpreadMode || 'single',
             prefs.dualPageGap || 28,
             preferenceValue('pagePaddingTop', verticalPadding),
@@ -10118,9 +10118,19 @@ class Reader {
 
         const next = _.cloneDeep(preferences);
         const version = Math.max(0, parseInt(next.readerPreferencesVersion, 10) || 0);
-        if (version < readerPreferencesVersion) {
+        if (version < 2) {
             next.textShadow = false;
             next.einkProfile = Object.assign({}, next.einkProfile || {}, {textShadow: false});
+        }
+        if (
+            version < 3
+            && next.contentWidthMode === 'fixed'
+            && (Number(next.contentWidth || 1040) || 1040) === 1040
+        ) {
+            // The previous desktop default constrained the whole two-page
+            // spread to 1040px. Migrate only that untouched default; custom
+            // fixed widths remain an explicit reader preference.
+            next.contentWidthMode = 'viewport';
         }
         next.readerPreferencesVersion = readerPreferencesVersion;
         return next;
