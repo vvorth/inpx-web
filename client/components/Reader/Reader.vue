@@ -3894,7 +3894,12 @@ class Reader {
             readMode: nextMode,
         });
         this.savePreferencesDebounced();
-        this.requestReaderSettingsReflow();
+        // On desktop the settings panel is an overlay, so it is safe to rebuild
+        // immediately. Deferring a mode switch hides the scroll content at once
+        // but never starts pagination until the panel is closed, leaving the
+        // preparing sheet on screen indefinitely. Compact settings still defer
+        // because their sheet temporarily changes the usable viewport height.
+        this.requestReaderSettingsReflow({immediate: !this.isCompactLayout});
     }
 
     async setPagedDirection(direction = 'vertical') {
@@ -6142,13 +6147,13 @@ class Reader {
         });
     }
 
-    requestReaderSettingsReflow({previewSpacing = false} = {}) {
+    requestReaderSettingsReflow({previewSpacing = false, immediate = false} = {}) {
         if (!this.bookUid) {
             this.readerSettingsReflowPending = false;
             return;
         }
 
-        if (!this.controlsOpen) {
+        if (immediate || !this.controlsOpen) {
             this.reflowReaderLayout();
             return;
         }

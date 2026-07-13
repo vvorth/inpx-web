@@ -2640,8 +2640,327 @@ class WebWorker {
         };
     }
 
-    async buildSimilarBooksShelfV2(user = null, limit = 8, context = null) {
+    getPersonalDiscoveryFeatureKeys(value = '', separator = ',') {
+        const expression = (separator === 'keywords' ? /[,;|]/ : /,/);
+        return Array.from(new Set(
+            String(value || '')
+                .split(expression)
+                .map(item => item.trim().toLowerCase())
+                .filter(item => item.length >= (separator === 'keywords' ? 3 : 1))
+        ));
+    }
+
+    getPersonalDiscoveryProgressWeight(percentValue = 0) {
+        const percent = Math.max(0, Math.min(1, Number(percentValue) || 0));
+        if (percent < 0.03)
+            return 0;
+        if (percent < 0.1)
+            return 0.25;
+        if (percent < 0.5)
+            return 1;
+        if (percent < 0.95)
+            return 2;
+        return 3.5;
+    }
+
+    async buildPersonalDiscoveryTasteProfile(user = null, context = null) {
         const hiddenBookUids = this.getHiddenDiscoveryBooks(user);
+        const progressMap = (context && context.progressMap
+            ? context.progressMap
+            : (user && user.readerProgress && typeof(user.readerProgress) === 'object' ? user.readerProgress : {}));
+        const lists = (context && Array.isArray(context.lists)
+            ? context.lists
+            : (user && user.id ? await this.readingListStore.getLists(user.id, {}) : []));
+        const discoveryPreferences = (user && user.discoveryPreferences && typeof(user.discoveryPreferences) === 'object'
+            ? user.discoveryPreferences
+            : {});
+        const feedback = (discoveryPreferences.feedback && typeof(discoveryPreferences.feedback) === 'object'
+            ? discoveryPreferences.feedback
+            : {});
+        const discoveryEvents = (discoveryPreferences.events && typeof(discoveryPreferences.events) === 'object'
+            ? discoveryPreferences.events
+            : {});
+        const tasteValue = (discoveryPreferences.taste && typeof(discoveryPreferences.taste) === 'object'
+            ? discoveryPreferences.taste
+            : {});
+        const normalizeTasteList = (items, maxItems = 20) => Array.from(new Set(
+            (Array.isArray(items) ? items : [])
+                .map(item => String(item || '').replace(/\s+/g, ' ').trim())
+                .filter(Boolean)
+        )).slice(0, maxItems);
+        const taste = {
+            genres: normalizeTasteList(tasteValue.genres).map(item => item.toLowerCase()),
+            authors: normalizeTasteList(tasteValue.authors),
+            languages: normalizeTasteList(tasteValue.languages, 10).map(item => item.toLowerCase()),
+            explorationRatio: Math.max(0.1, Math.min(0.3, Number(tasteValue.explorationRatio) || 0.15)),
+            completedAt: String(tasteValue.completedAt || '').trim(),
+            updatedAt: String(tasteValue.updatedAt || '').trim(),
+        };
+        const profile = {
+            authorWeights: new Map(),
+            seriesWeights: new Map(),
+            genreWeights: new Map(),
+            keywordWeights: new Map(),
+            languageWeights: new Map(),
+            rejectedAuthorWeights: new Map(),
+            rejectedSeriesWeights: new Map(),
+            rejectedGenreWeights: new Map(),
+            rejectedKeywordWeights: new Map(),
+            discoveryEvents,
+            taste,
+            explicitTasteAuthors: new Set(taste.authors.map(item => String(item || '').trim().toLowerCase()).filter(Boolean)),
+            explicitTasteGenres: new Set(taste.genres),
+            explicitTasteLanguages: new Set(taste.languages),
+            knownBookUids: new Set(hiddenBookUids),
+            signalCount: 0,
+            updatedAt: 0,
+        };
+        const signals = new Map();
+        const bookCache = new Map();
+        const loadBook = async(bookUid = '') => {
+            const normalizedBookUid = String(bookUid || '').trim();
+            if (!normalizedBookUid)
+                return null;
+            if (!bookCache.has(normalizedBookUid))
+                bookCache.set(normalizedBookUid, await this.getBookRecordByUid(normalizedBookUid));
+            return bookCache.get(normalizedBookUid);
+        };
+        const addWeight = (map, key, amount) => {
+            const normalizedKey = String(key || '').trim().toLowerCase();
+            if (!normalizedKey || !Number(amount))
+                return;
+            map.set(normalizedKey, (map.get(normalizedKey) || 0) + Number(amount));
+        };
+        const rememberSignal = (bookUid = '', amount = 0, stamp = '') => {
+            const normalizedBookUid = String(bookUid || '').trim();
+            if (!normalizedBookUid)
+                return;
+            profile.knownBookUids.add(normalizedBookUid);
+            if (!Number(amount) || hiddenBookUids.has(normalizedBookUid))
+                return;
+
+            const current = signals.get(normalizedBookUid) || {amount: 0, stamp: ''};
+            current.amount = Math.min(4.5, current.amount + Number(amount));
+            if (String(stamp || '').localeCompare(String(current.stamp || '')) > 0)
+                current.stamp = String(stamp || '');
+            signals.set(normalizedBookUid, current);
+        };
+        const getRecencyMultiplier = (stamp = '') => {
+            const time = Date.parse(String(stamp || '')) || 0;
+            if (!time)
+                return 1;
+            const ageDays = Math.max(0, Math.floor((Date.now() - time) / 86400000));
+            if (ageDays <= 7)
+                return 1.45;
+            if (ageDays <= 30)
+                return 1.25;
+            if (ageDays <= 90)
+                return 1.1;
+            return 1;
+        };
+        const applyPositiveBook = (book, signal = {}) => {
+            if (!book)
+                return;
+            const weightedAmount = Number(signal.amount || 0) * getRecencyMultiplier(signal.stamp);
+            addWeight(profile.authorWeights, book.author, 2.2 * weightedAmount);
+            addWeight(profile.seriesWeights, book.series, 1.2 * weightedAmount);
+            this.getPersonalDiscoveryFeatureKeys(book.genre)
+                .forEach(genre => addWeight(profile.genreWeights, genre, 1.8 * weightedAmount));
+            this.getPersonalDiscoveryFeatureKeys(book.keywords, 'keywords')
+                .forEach(keyword => addWeight(profile.keywordWeights, keyword, 1.4 * weightedAmount));
+            addWeight(profile.languageWeights, book.lang, 0.25 * weightedAmount);
+            profile.updatedAt = Math.max(profile.updatedAt, Date.parse(String(signal.stamp || '')) || 0);
+        };
+        const applyRejectedBook = (book, kind = 'not_interested') => {
+            if (!book)
+                return;
+            if (kind === 'already_read' || kind === 'more_like_this')
+                return;
+
+            const authorAmount = (kind === 'dislike_author' ? 4 : (kind === 'dislike_genre' ? 0.15 : 1.5));
+            const seriesAmount = (kind === 'dislike_author' ? 1 : (kind === 'dislike_genre' ? 0.15 : 1));
+            const genreAmount = (kind === 'dislike_genre' ? 3 : (kind === 'dislike_author' ? 0.25 : 1));
+            const keywordAmount = (kind === 'dislike_genre' ? 1 : (kind === 'dislike_author' ? 0.15 : 0.7));
+            addWeight(profile.rejectedAuthorWeights, book.author, authorAmount);
+            addWeight(profile.rejectedSeriesWeights, book.series, seriesAmount);
+            this.getPersonalDiscoveryFeatureKeys(book.genre)
+                .forEach(genre => addWeight(profile.rejectedGenreWeights, genre, genreAmount));
+            this.getPersonalDiscoveryFeatureKeys(book.keywords, 'keywords')
+                .forEach(keyword => addWeight(profile.rejectedKeywordWeights, keyword, keywordAmount));
+        };
+
+        for (const [bookUid, progress] of Object.entries(progressMap)) {
+            const normalizedBookUid = String(bookUid || '').trim();
+            profile.knownBookUids.add(normalizedBookUid);
+            if (!progress || progress.hidden === true)
+                continue;
+            rememberSignal(
+                normalizedBookUid,
+                this.getPersonalDiscoveryProgressWeight(progress.percent),
+                progress.updatedAt,
+            );
+        }
+
+        for (const list of lists) {
+            for (const entry of this.readingListStore.normalizeEntries(list.books)) {
+                rememberSignal(
+                    entry.bookUid,
+                    (entry.read ? 2.5 : 0.8),
+                    list.updatedAt || list.createdAt,
+                );
+            }
+        }
+
+        for (const [bookUid, item] of Object.entries(feedback)) {
+            const kind = String(item && item.kind || '').trim().toLowerCase();
+            profile.knownBookUids.add(String(bookUid || '').trim());
+            if (kind === 'more_like_this')
+                rememberSignal(bookUid, 4, item && item.updatedAt);
+        }
+
+        for (const [bookUid, item] of Object.entries(discoveryEvents)) {
+            if ((Number(item && item.startCount) || 0) > 0)
+                profile.knownBookUids.add(String(bookUid || '').trim());
+        }
+
+        for (const [bookUid, signal] of signals)
+            applyPositiveBook(await loadBook(bookUid), signal);
+        profile.signalCount = signals.size;
+
+        taste.authors.forEach(author => addWeight(profile.authorWeights, author, 5));
+        taste.genres.forEach(genre => addWeight(profile.genreWeights, genre, 4));
+        taste.languages.forEach(language => addWeight(profile.languageWeights, language, 2));
+        profile.updatedAt = Math.max(profile.updatedAt, Date.parse(String(taste.updatedAt || taste.completedAt || '')) || 0);
+
+        // A long-lived profile may contain thousands of dismissed books. Recent
+        // feedback is enough to adjust taste without turning a shelf request into
+        // thousands of random reads from the book index.
+        const feedbackEntries = Object.entries(feedback).slice(-200);
+        const feedbackBookUids = new Set(feedbackEntries.map(([bookUid]) => bookUid));
+        for (const [bookUid, item] of feedbackEntries)
+            applyRejectedBook(await loadBook(bookUid), String(item && item.kind || 'not_interested'));
+        for (const bookUid of Array.from(hiddenBookUids).filter(item => !feedbackBookUids.has(item)).slice(-200))
+            applyRejectedBook(await loadBook(bookUid), 'not_interested');
+
+        return profile;
+    }
+
+    scorePersonalDiscoveryCandidate(book = {}, profile = {}, rotationSeed = 0) {
+        const getWeight = (map, key) => {
+            const normalizedKey = String(key || '').trim().toLowerCase();
+            if (!normalizedKey)
+                return 0;
+            return Number(map instanceof Map ? map.get(normalizedKey) : (map || {})[normalizedKey]) || 0;
+        };
+        const authorKey = String(book.author || '').trim().toLowerCase();
+        const seriesKey = String(book.series || '').trim().toLowerCase();
+        const genreKeys = this.getPersonalDiscoveryFeatureKeys(book.genre);
+        const keywordKeys = this.getPersonalDiscoveryFeatureKeys(book.keywords, 'keywords');
+        const languageKey = String(book.lang || '').trim().toLowerCase();
+        const bookUid = String(book._uid || book.bookUid || '').trim();
+        let contentScore = 0;
+
+        contentScore += getWeight(profile.authorWeights, authorKey) * 32;
+        contentScore += getWeight(profile.seriesWeights, seriesKey) * 36;
+        genreKeys.forEach(key => contentScore += getWeight(profile.genreWeights, key) * 26);
+        keywordKeys.forEach(key => contentScore += getWeight(profile.keywordWeights, key) * 20);
+        if (contentScore <= 0)
+            return 0;
+
+        let score = contentScore;
+        score += Math.min(8, getWeight(profile.languageWeights, languageKey) * 2);
+        score -= getWeight(profile.rejectedAuthorWeights, authorKey) * 28;
+        score -= getWeight(profile.rejectedSeriesWeights, seriesKey) * 24;
+        genreKeys.forEach(key => score -= getWeight(profile.rejectedGenreWeights, key) * 18);
+        keywordKeys.forEach(key => score -= getWeight(profile.rejectedKeywordWeights, key) * 12);
+        if (score <= 0)
+            return 0;
+
+        const discoveryEvent = ((profile.discoveryEvents || {})[bookUid] || {});
+        const impressionCount = Math.max(0, Number(discoveryEvent.impressionCount) || 0);
+        const openCount = Math.max(0, Number(discoveryEvent.openCount) || 0);
+        const lastShownTime = Date.parse(String(discoveryEvent.lastShownAt || ''));
+        const shownAgeDays = Number.isFinite(lastShownTime)
+            ? Math.max(0, Math.floor((Date.now() - lastShownTime) / 86400000))
+            : Number.MAX_SAFE_INTEGER;
+        if (impressionCount >= 3 && openCount === 0 && shownAgeDays < 30)
+            return 0;
+
+        const ignoredImpressions = Math.max(0, impressionCount - Math.max(1, openCount * 2));
+        score -= Math.min(50, ignoredImpressions * 10);
+        if (impressionCount > 0 && shownAgeDays < 7)
+            score -= 8;
+        score += Math.min(12, openCount * 4);
+        if (score <= 0)
+            return 0;
+
+        score += Math.max(0, Math.min(5, Number(book.librate) || 0)) * 4;
+        const bookTime = Date.parse(String(book.date || ''));
+        if (Number.isFinite(bookTime)) {
+            const ageDays = Math.max(0, Math.floor((Date.now() - bookTime) / 86400000));
+            score += Math.max(0, 12 - (Math.min(ageDays, 365) * 12 / 365));
+        }
+
+        const numericSeed = Number(rotationSeed) || 0;
+        const stableHash = String(book._uid || book.id || '')
+            .split('')
+            .reduce((sum, char) => ((sum * 33) + char.charCodeAt(0) + numericSeed) % 9973, numericSeed);
+        score += (stableHash / 9973) * 8;
+        return score;
+    }
+
+    scorePersonalDiscoveryExplorationCandidate(book = {}, profile = {}, rotationSeed = 0) {
+        const getWeight = (map, key) => {
+            const normalizedKey = String(key || '').trim().toLowerCase();
+            return normalizedKey ? (Number(map instanceof Map ? map.get(normalizedKey) : (map || {})[normalizedKey]) || 0) : 0;
+        };
+        const authorKey = String(book.author || '').trim().toLowerCase();
+        const seriesKey = String(book.series || '').trim().toLowerCase();
+        const genreKeys = this.getPersonalDiscoveryFeatureKeys(book.genre);
+        const keywordKeys = this.getPersonalDiscoveryFeatureKeys(book.keywords, 'keywords');
+        const languageKey = String(book.lang || '').trim().toLowerCase();
+        const bookUid = String(book._uid || book.bookUid || '').trim();
+
+        if (getWeight(profile.rejectedAuthorWeights, authorKey) > 0 || getWeight(profile.rejectedSeriesWeights, seriesKey) > 0)
+            return 0;
+        if (genreKeys.some(key => getWeight(profile.rejectedGenreWeights, key) >= 1))
+            return 0;
+        if (keywordKeys.some(key => getWeight(profile.rejectedKeywordWeights, key) >= 1))
+            return 0;
+
+        const discoveryEvent = ((profile.discoveryEvents || {})[bookUid] || {});
+        const impressionCount = Math.max(0, Number(discoveryEvent.impressionCount) || 0);
+        const openCount = Math.max(0, Number(discoveryEvent.openCount) || 0);
+        const lastShownTime = Date.parse(String(discoveryEvent.lastShownAt || ''));
+        const shownAgeDays = Number.isFinite(lastShownTime)
+            ? Math.max(0, Math.floor((Date.now() - lastShownTime) / 86400000))
+            : Number.MAX_SAFE_INTEGER;
+        if (impressionCount >= 3 && openCount === 0 && shownAgeDays < 30)
+            return 0;
+
+        let score = 22;
+        score += Math.max(0, Math.min(5, Number(book.librate) || 0)) * 5;
+        if (profile.explicitTasteLanguages instanceof Set && profile.explicitTasteLanguages.has(languageKey))
+            score += 6;
+        const bookTime = Date.parse(String(book.date || ''));
+        if (Number.isFinite(bookTime)) {
+            const ageDays = Math.max(0, Math.floor((Date.now() - bookTime) / 86400000));
+            score += Math.max(0, 14 - (Math.min(ageDays, 730) * 14 / 730));
+        }
+        score -= Math.min(40, Math.max(0, impressionCount - Math.max(1, openCount * 2)) * 10);
+        if (impressionCount > 0 && shownAgeDays < 7)
+            score -= 8;
+        score += Math.min(12, openCount * 4);
+
+        const numericSeed = Number(rotationSeed) || 0;
+        const stableHash = String(book._uid || book.id || '')
+            .split('')
+            .reduce((sum, char) => ((sum * 33) + char.charCodeAt(0) + numericSeed) % 9973, numericSeed);
+        score += (stableHash / 9973) * 10;
+        return Math.max(0, score);
+    }
+
+    async buildSimilarBooksShelfV2(user = null, limit = 8, context = null) {
         if (!user || !user.id) {
             return {
                 id: 'similar-books',
@@ -2655,83 +2974,21 @@ class WebWorker {
             };
         }
 
-        const progressMap = (context && context.progressMap
-            ? context.progressMap
-            : (user.readerProgress && typeof(user.readerProgress) === 'object' ? user.readerProgress : {}));
         const lists = (context && Array.isArray(context.lists) ? context.lists : await this.readingListStore.getLists(user.id, {}));
         const readBookUids = (context && context.readBookUids ? context.readBookUids : this.getPersonalReadBookSet(user, lists));
-        const authorWeights = new Map();
-        const seriesWeights = new Map();
-        const genreWeights = new Map();
-        const knownBookUids = new Set(hiddenBookUids);
-        let updatedAt = 0;
-
-        const addWeight = (map, key, amount) => {
-            const normalizedKey = String(key || '').trim().toLowerCase();
-            if (!normalizedKey)
-                return;
-            map.set(normalizedKey, (map.get(normalizedKey) || 0) + Number(amount || 0));
-        };
-
-        const getRecencyMultiplier = (stamp = '') => {
-            const time = Date.parse(String(stamp || '')) || 0;
-            if (!time)
-                return 1;
-
-            const ageDays = Math.max(0, Math.floor((Date.now() - time) / 86400000));
-            if (ageDays <= 7)
-                return 1.45;
-            if (ageDays <= 30)
-                return 1.25;
-            if (ageDays <= 90)
-                return 1.1;
-            return 1;
-        };
-
-        const applyBookSignals = (book, amount = 1, stamp = '') => {
-            if (!book)
-                return;
-
-            const recencyMultiplier = getRecencyMultiplier(stamp);
-            const weightedAmount = Number(amount || 0) * recencyMultiplier;
-            knownBookUids.add(book._uid);
-            addWeight(authorWeights, book.author, 4 * weightedAmount);
-            addWeight(seriesWeights, book.series, 6 * weightedAmount);
-            String(book.genre || '')
-                .split(',')
-                .map(item => item.trim())
-                .filter(Boolean)
-                .forEach((genre) => addWeight(genreWeights, genre, 2 * weightedAmount));
-
-            updatedAt = Math.max(updatedAt, Date.parse(String(stamp || '')) || 0);
-        };
-
-        for (const [bookUid, progress] of Object.entries(progressMap)) {
-            const book = await this.getBookRecordByUid(bookUid);
-            if (!book)
-                continue;
-
-            const percent = Number(progress && progress.percent || 0) || 0;
-            applyBookSignals(book, (percent >= 0.95 ? 3 : (percent >= 0.5 ? 2 : 1)), progress && progress.updatedAt);
-        }
-
-        for (const list of lists) {
-            const entries = this.readingListStore.normalizeEntries(list.books);
-            for (const entry of entries) {
-                const book = await this.getBookRecordByUid(entry.bookUid);
-                if (!book)
-                    continue;
-
-                applyBookSignals(book, (entry.read ? 2 : 1), list.updatedAt || list.createdAt);
-            }
-        }
-
-        const preferredAuthors = Object.fromEntries(authorWeights);
-        const preferredSeries = Object.fromEntries(seriesWeights);
-        const preferredGenres = Object.fromEntries(genreWeights);
+        const profile = await this.buildPersonalDiscoveryTasteProfile(user, Object.assign({}, context || {}, {lists}));
+        const preferredAuthors = Object.fromEntries(profile.authorWeights);
+        const preferredSeries = Object.fromEntries(profile.seriesWeights);
+        const preferredGenres = Object.fromEntries(profile.genreWeights);
+        const preferredKeywords = Object.fromEntries(profile.keywordWeights);
+        const preferredLanguages = Object.fromEntries(profile.languageWeights);
+        const rejectedAuthors = Object.fromEntries(profile.rejectedAuthorWeights);
+        const rejectedSeries = Object.fromEntries(profile.rejectedSeriesWeights);
+        const rejectedGenres = Object.fromEntries(profile.rejectedGenreWeights);
+        const rejectedKeywords = Object.fromEntries(profile.rejectedKeywordWeights);
         const displayLimit = Math.max(1, Math.min(parseInt(limit, 10) || 8, 96));
         const probeLimit = displayLimit + 1;
-        if (!Object.keys(preferredAuthors).length && !Object.keys(preferredSeries).length && !Object.keys(preferredGenres).length) {
+        if (!Object.keys(preferredAuthors).length && !Object.keys(preferredSeries).length && !Object.keys(preferredGenres).length && !Object.keys(preferredKeywords).length && !Object.keys(preferredLanguages).length) {
             return {
                 id: 'similar-books',
                 title: '\u041f\u043e\u0445\u043e\u0436\u0435 \u043d\u0430 \u0442\u043e, \u0447\u0442\u043e \u0432\u044b \u0447\u0438\u0442\u0430\u043b\u0438',
@@ -2739,8 +2996,10 @@ class WebWorker {
                 source: 'personal',
                 sourceName: '\u0414\u043b\u044f \u0432\u0430\u0441',
                 updatedAt: Date.now(),
+                discoveryTaste: profile.taste,
+                discoveryNeedsTasteSetup: !profile.taste.completedAt,
                 items: [],
-                emptyMessage: '\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u043f\u043e\u0447\u0438\u0442\u0430\u0439\u0442\u0435 \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u043a\u043d\u0438\u0433 \u0438\u043b\u0438 \u0434\u043e\u0431\u0430\u0432\u044c\u0442\u0435 \u0438\u0445 \u0432 \u0441\u043f\u0438\u0441\u043a\u0438.',
+                emptyMessage: '\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u043b\u044e\u0431\u0438\u043c\u044b\u0435 \u0436\u0430\u043d\u0440\u044b, \u0430\u0432\u0442\u043e\u0440\u043e\u0432 \u0438\u043b\u0438 \u044f\u0437\u044b\u043a\u0438 \u0432\u044b\u0448\u0435 \u2014 \u043b\u0438\u0431\u043e \u043d\u0430\u0447\u043d\u0438\u0442\u0435 \u0447\u0438\u0442\u0430\u0442\u044c.',
             };
         }
 
@@ -2752,14 +3011,21 @@ class WebWorker {
             table: 'book',
             rawResult: true,
             where: `
-                const knownBookUids = new Set(${this.db.esc(Array.from(knownBookUids))});
+                const knownBookUids = new Set(${this.db.esc(Array.from(profile.knownBookUids))});
                 const preferredAuthors = ${this.db.esc(preferredAuthors)};
                 const preferredSeries = ${this.db.esc(preferredSeries)};
                 const preferredGenres = ${this.db.esc(preferredGenres)};
-                const limit = ${this.db.esc(Math.max(probeLimit * 8 + 24, 48))};
+                const preferredKeywords = ${this.db.esc(preferredKeywords)};
+                const preferredLanguages = ${this.db.esc(preferredLanguages)};
+                const rejectedAuthors = ${this.db.esc(rejectedAuthors)};
+                const rejectedSeries = ${this.db.esc(rejectedSeries)};
+                const rejectedGenres = ${this.db.esc(rejectedGenres)};
+                const rejectedKeywords = ${this.db.esc(rejectedKeywords)};
+                const limit = ${this.db.esc(Math.max(probeLimit * 16 + 64, 192))};
                 const rotationSeed = ${this.db.esc(rotationSeed)};
 
                 const result = [];
+                const explorationResult = [];
                 for (const id of @all()) {
                     const row = @unsafeRow(id);
                     if (!row || row.del || !row.title || !row._uid || knownBookUids.has(row._uid))
@@ -2769,34 +3035,60 @@ class WebWorker {
                     const authorKey = String(row.author || '').trim().toLowerCase();
                     const seriesKey = String(row.series || '').trim().toLowerCase();
                     const genreKeys = String(row.genre || '').split(',').map(item => item.trim().toLowerCase()).filter(Boolean);
+                    const keywordKeys = String(row.keywords || '').split(/[,;|]/).map(item => item.trim().toLowerCase()).filter(item => item.length >= 3);
+                    const languageKey = String(row.lang || '').trim().toLowerCase();
 
                     if (authorKey && preferredAuthors[authorKey])
-                        score += preferredAuthors[authorKey] * 80;
+                        score += preferredAuthors[authorKey] * 32;
                     if (seriesKey && preferredSeries[seriesKey])
-                        score += preferredSeries[seriesKey] * 110;
+                        score += preferredSeries[seriesKey] * 36;
                     for (const genreKey of genreKeys) {
                         if (preferredGenres[genreKey])
-                            score += preferredGenres[genreKey] * 22;
+                            score += preferredGenres[genreKey] * 26;
+                    }
+                    for (const keywordKey of keywordKeys) {
+                        if (preferredKeywords[keywordKey])
+                            score += preferredKeywords[keywordKey] * 20;
                     }
 
-                    if (!score)
+                    const discoveryExplore = !score;
+                    if (discoveryExplore)
+                        score = 22;
+
+                    if (languageKey && preferredLanguages[languageKey])
+                        score += Math.min(8, preferredLanguages[languageKey] * 2);
+                    if (authorKey && rejectedAuthors[authorKey])
+                        score -= rejectedAuthors[authorKey] * 28;
+                    if (seriesKey && rejectedSeries[seriesKey])
+                        score -= rejectedSeries[seriesKey] * 24;
+                    for (const genreKey of genreKeys) {
+                        if (rejectedGenres[genreKey])
+                            score -= rejectedGenres[genreKey] * 18;
+                    }
+                    for (const keywordKey of keywordKeys) {
+                        if (rejectedKeywords[keywordKey])
+                            score -= rejectedKeywords[keywordKey] * 12;
+                    }
+                    if (score <= 0)
                         continue;
 
                     if (row.librate)
-                        score += row.librate * 6;
+                        score += Math.max(0, Math.min(5, Number(row.librate) || 0)) * 4;
                     if (row.date) {
-                        const ageDays = Math.max(0, Math.floor((Date.now() - Date.parse(row.date)) / 86400000));
-                        score += Math.max(0, 30 - Math.min(ageDays, 30));
+                        const bookTime = Date.parse(row.date);
+                        if (Number.isFinite(bookTime)) {
+                            const ageDays = Math.max(0, Math.floor((Date.now() - bookTime) / 86400000));
+                            score += Math.max(0, 12 - (Math.min(ageDays, 365) * 12 / 365));
+                        }
                     }
-                    if (String(row.ext || '').toLowerCase() === 'fb2')
-                        score += 10;
 
                     const stableHash = String(row._uid || row.id || '')
                         .split('')
                         .reduce((sum, char) => ((sum * 33) + char.charCodeAt(0) + rotationSeed) % 9973, rotationSeed);
-                    score += (stableHash / 9973) * 12;
+                    score += (stableHash / 9973) * 8;
 
-                    result.push(Object.assign({}, row, {_similarityScore: score}));
+                    const target = (discoveryExplore ? explorationResult : result);
+                    target.push(Object.assign({}, row, {_similarityScore: score, _discoveryExplore: discoveryExplore}));
                 }
 
                 result.sort((a, b) => {
@@ -2805,40 +3097,100 @@ class WebWorker {
                         return scoreCmp;
                     return String(a.title || '').localeCompare(String(b.title || ''), 'ru');
                 });
+                explorationResult.sort((a, b) => {
+                    const scoreCmp = Number(b._similarityScore || 0) - Number(a._similarityScore || 0);
+                    if (scoreCmp)
+                        return scoreCmp;
+                    return String(a.title || '').localeCompare(String(b.title || ''), 'ru');
+                });
 
-                return result.slice(0, limit);
+                return result.slice(0, limit).concat(explorationResult.slice(0, limit));
             `
         });
 
-        const rawItems = ((rows[0] && rows[0].rawResult) ? rows[0].rawResult : []);
+        const rawItems = ((rows[0] && rows[0].rawResult) ? rows[0].rawResult : [])
+            .map(book => Object.assign({}, book, {
+                _similarityScore: (book._discoveryExplore
+                    ? this.scorePersonalDiscoveryExplorationCandidate(book, profile, rotationSeed)
+                    : this.scorePersonalDiscoveryCandidate(book, profile, rotationSeed)),
+            }))
+            .filter(book => book._similarityScore > 0);
         const items = [];
         const authorCounts = new Map();
         const seriesCounts = new Map();
+        const genreCounts = new Map();
+        const affinityRemaining = rawItems.filter(book => !book._discoveryExplore);
+        const explorationRemaining = rawItems.filter(book => book._discoveryExplore);
+        const explorationRatio = Math.max(0.1, Math.min(0.3, Number(profile.taste && profile.taste.explorationRatio) || 0.15));
+        const desiredExplorationCount = Math.min(explorationRemaining.length, Math.max(1, Math.round(displayLimit * explorationRatio)));
+        let explorationCount = 0;
 
-        for (const book of rawItems) {
+        while ((affinityRemaining.length || explorationRemaining.length) && items.length < probeLimit) {
+            const explorationDue = explorationCount < desiredExplorationCount
+                && (items.length + 1) >= Math.ceil(((explorationCount + 1) * displayLimit) / desiredExplorationCount);
+            let remaining = (explorationDue ? explorationRemaining : affinityRemaining);
+            if (!remaining.length)
+                remaining = (explorationDue ? affinityRemaining : explorationRemaining);
+            let bestIndex = -1;
+            let bestAdjustedScore = -Infinity;
+            for (let index = 0; index < remaining.length; index++) {
+                const candidate = remaining[index];
+                const authorKey = String(candidate.author || '').trim().toLowerCase();
+                const seriesKey = String(candidate.series || '').trim().toLowerCase();
+                if (authorKey && (authorCounts.get(authorKey) || 0) >= 2)
+                    continue;
+                if (seriesKey && (seriesCounts.get(seriesKey) || 0) >= 1)
+                    continue;
+
+                const genrePenalty = this.getPersonalDiscoveryFeatureKeys(candidate.genre)
+                    .reduce((sum, key) => sum + (genreCounts.get(key) || 0) * 10, 0);
+                const adjustedScore = Number(candidate._similarityScore || 0)
+                    - (authorKey ? (authorCounts.get(authorKey) || 0) * 35 : 0)
+                    - (seriesKey ? (seriesCounts.get(seriesKey) || 0) * 60 : 0)
+                    - genrePenalty;
+                if (adjustedScore > bestAdjustedScore) {
+                    bestAdjustedScore = adjustedScore;
+                    bestIndex = index;
+                }
+            }
+            if (bestIndex < 0)
+                break;
+
+            const [book] = remaining.splice(bestIndex, 1);
             const authorKey = String(book.author || '').trim().toLowerCase();
             const seriesKey = String(book.series || '').trim().toLowerCase();
-            if (authorKey && (authorCounts.get(authorKey) || 0) >= 2)
-                continue;
-            if (seriesKey && (seriesCounts.get(seriesKey) || 0) >= 2)
-                continue;
-
             const reasons = [];
-            if (authorKey && authorWeights.has(authorKey))
-                reasons.push(`\u0410\u0432\u0442\u043e\u0440: ${book.author}`);
-            if (seriesKey && seriesWeights.has(seriesKey))
+            if (book._discoveryExplore) {
+                reasons.push('\u041d\u0435\u043c\u043d\u043e\u0433\u043e \u043d\u043e\u0432\u043e\u0433\u043e \u0434\u043b\u044f \u0440\u0430\u0437\u043d\u043e\u043e\u0431\u0440\u0430\u0437\u0438\u044f');
+                if (Number(book.librate) >= 4)
+                    reasons.push('\u0412\u044b\u0441\u043e\u043a\u0430\u044f \u043e\u0446\u0435\u043d\u043a\u0430');
+                explorationCount++;
+            } else if (authorKey && profile.authorWeights.has(authorKey)) {
+                reasons.push(profile.explicitTasteAuthors.has(authorKey)
+                    ? `\u0412\u044b \u0432\u044b\u0431\u0440\u0430\u043b\u0438 \u0430\u0432\u0442\u043e\u0440\u0430: ${book.author}`
+                    : `\u041f\u043e\u0445\u043e\u0436\u0438\u0439 \u0430\u0432\u0442\u043e\u0440: ${book.author}`);
+            }
+            if (seriesKey && profile.seriesWeights.has(seriesKey))
                 reasons.push(`\u0421\u0435\u0440\u0438\u044f: ${book.series}`);
 
             const matchedGenres = String(book.genre || '')
                 .split(',')
                 .map(item => item.trim())
                 .filter(Boolean)
-                .filter((genre) => genreWeights.has(String(genre || '').trim().toLowerCase()));
+                .filter((genre) => profile.genreWeights.has(String(genre || '').trim().toLowerCase()));
             if (matchedGenres.length)
-                reasons.push(`\u0416\u0430\u043d\u0440\u044b: ${matchedGenres.slice(0, 2).join(', ')}`);
+                reasons.push(matchedGenres.some(genre => profile.explicitTasteGenres.has(String(genre || '').trim().toLowerCase()))
+                    ? `\u0412\u044b \u0432\u044b\u0431\u0440\u0430\u043b\u0438 \u0436\u0430\u043d\u0440: ${matchedGenres.slice(0, 2).join(', ')}`
+                    : `\u041f\u043e\u0445\u043e\u0436\u0438\u0435 \u0436\u0430\u043d\u0440\u044b: ${matchedGenres.slice(0, 2).join(', ')}`);
+
+            const matchedKeywords = this.getPersonalDiscoveryFeatureKeys(book.keywords, 'keywords')
+                .filter(keyword => profile.keywordWeights.has(keyword));
+            if (matchedKeywords.length)
+                reasons.push(`\u0422\u0435\u043c\u044b: ${matchedKeywords.slice(0, 2).join(', ')}`);
 
             items.push(Object.assign({}, book, {
                 discoveryReason: (reasons.length ? reasons.join(' \u00b7 ') : '\u041f\u043e\u0445\u043e\u0436\u0435 \u043d\u0430 \u0442\u043e, \u0447\u0442\u043e \u0432\u044b \u0447\u0438\u0442\u0430\u043b\u0438'),
+                discoveryExploration: book._discoveryExplore === true,
                 discoveryRead: readBookUids.has(String(book._uid || '').trim()),
             }));
 
@@ -2846,8 +3198,8 @@ class WebWorker {
                 authorCounts.set(authorKey, (authorCounts.get(authorKey) || 0) + 1);
             if (seriesKey)
                 seriesCounts.set(seriesKey, (seriesCounts.get(seriesKey) || 0) + 1);
-            if (items.length >= probeLimit)
-                break;
+            this.getPersonalDiscoveryFeatureKeys(book.genre)
+                .forEach(key => genreCounts.set(key, (genreCounts.get(key) || 0) + 1));
         }
 
         const hasMore = items.length > displayLimit;
@@ -2856,11 +3208,14 @@ class WebWorker {
         return {
             id: 'similar-books',
             title: '\u041f\u043e\u0445\u043e\u0436\u0435 \u043d\u0430 \u0442\u043e, \u0447\u0442\u043e \u0432\u044b \u0447\u0438\u0442\u0430\u043b\u0438',
-            subtitle: '\u041f\u043e\u0434\u0431\u043e\u0440\u043a\u0430 \u043f\u043e \u0430\u0432\u0442\u043e\u0440\u0430\u043c, \u0441\u0435\u0440\u0438\u044f\u043c \u0438 \u0436\u0430\u043d\u0440\u0430\u043c \u0438\u0437 \u0432\u0430\u0448\u0435\u0439 \u0438\u0441\u0442\u043e\u0440\u0438\u0438',
+            subtitle: '\u041f\u043e\u0434\u0431\u043e\u0440\u043a\u0430 \u043f\u043e \u0430\u0432\u0442\u043e\u0440\u0430\u043c, \u0441\u0435\u0440\u0438\u044f\u043c, \u0436\u0430\u043d\u0440\u0430\u043c \u0438 \u0442\u0435\u043c\u0430\u043c \u0438\u0437 \u0432\u0430\u0448\u0435\u0439 \u0438\u0441\u0442\u043e\u0440\u0438\u0438',
             source: 'personal',
             sourceName: '\u0414\u043b\u044f \u0432\u0430\u0441',
-            updatedAt: updatedAt || Date.now(),
+            updatedAt: profile.updatedAt || Date.now(),
             discoveryHasMore: hasMore,
+            discoveryTaste: profile.taste,
+            discoveryNeedsTasteSetup: !profile.taste.completedAt && profile.signalCount === 0,
+            discoveryExplorationRatio: explorationRatio,
             items: visibleItems,
             emptyMessage: '\u041f\u043e\u043a\u0430 \u043c\u0430\u043b\u043e \u0434\u0430\u043d\u043d\u044b\u0445 \u0434\u043b\u044f \u0440\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0430\u0446\u0438\u0439. \u041f\u043e\u0447\u0438\u0442\u0430\u0439\u0442\u0435 \u0435\u0449\u0451 \u043d\u0435\u043c\u043d\u043e\u0433\u043e \u0438\u043b\u0438 \u0434\u043e\u0431\u0430\u0432\u044c\u0442\u0435 \u043a\u043d\u0438\u0433\u0438 \u0432 \u0441\u043f\u0438\u0441\u043a\u0438.',
         };
@@ -3262,6 +3617,12 @@ class WebWorker {
         return {preferences};
     }
 
+    async recordDiscoveryEvents(userId = '', profileAccessToken = '', events = []) {
+        this.checkMyState();
+        const user = await this.requireAuthorizedUser(userId, profileAccessToken);
+        return await this.readingListStore.recordDiscoveryEvents(user.id, events);
+    }
+
     async updateSharedDiscoveryConfig(userId = '', profileAccessToken = '', patch = {}) {
         this.checkMyState();
         await this.requireAdmin(userId, profileAccessToken);
@@ -3522,6 +3883,7 @@ class WebWorker {
                 averagePercent: uptime > 0 ? (cpuTotalSeconds / uptime) * 100 : 0,
             },
             runtime: runtimeMetrics.getSnapshot(),
+            discovery: await this.readingListStore.getDiscoveryMetrics(),
             index,
             stats: (dbConfig && dbConfig.stats) || (index && index.stats) || {},
             paths: {

@@ -89,8 +89,13 @@
                     {{ bookSeries }}
                 </div>
 
-                <div v-if="book.discoveryReason" class="book-discovery-note">
-                    {{ book.discoveryReason }}
+                <div
+                    v-if="book.discoveryReason"
+                    class="book-discovery-note"
+                    :class="{'book-discovery-note--explore': book.discoveryExploration}"
+                >
+                    <q-icon :name="book.discoveryExploration ? 'la la-compass' : 'la la-lightbulb'" />
+                    <span><strong>{{ book.discoveryExploration ? 'Попробовать новое:' : 'Почему рекомендуем:' }}</strong> {{ effectiveDiscoveryReason }}</span>
                 </div>
 
                 <div v-if="showGenres && bookGenreItems.length" class="book-genres">
@@ -198,11 +203,41 @@
                         v-if="showDiscoveryDismiss"
                         flat
                         no-caps
-                        icon="la la-eye-slash"
-                        @click.stop.prevent="emit('discoveryDismiss')"
+                        icon="la la-thumbs-up"
+                        @click.stop.prevent="selectDiscoveryFeedback('more_like_this')"
                     >
-                        {{ effectiveDiscoveryDismissLabel }}
+                        {{ effectiveMoreLikeThisLabel }}
                     </q-btn>
+
+                    <div v-if="showDiscoveryDismiss" class="action-split discovery-feedback-split" @click.stop>
+                        <q-btn
+                            flat
+                            no-caps
+                            icon="la la-eye-slash"
+                            @click.stop.prevent="selectDiscoveryFeedback('not_interested')"
+                        >
+                            {{ effectiveDiscoveryDismissLabel }}
+                        </q-btn>
+                        <button
+                            type="button"
+                            class="action-split-toggle"
+                            :aria-label="discoveryFeedbackOptionsLabel"
+                            @click.stop.prevent="toggleShareMenu('feedback')"
+                        >
+                            <i class="la la-angle-up" />
+                        </button>
+                        <div v-if="discoveryFeedbackMenuOpen" class="action-split-menu discovery-feedback-menu">
+                            <button type="button" class="action-split-item" @click.stop.prevent="selectDiscoveryFeedback('dislike_author')">
+                                {{ dislikeAuthorLabel }}
+                            </button>
+                            <button type="button" class="action-split-item" @click.stop.prevent="selectDiscoveryFeedback('dislike_genre')">
+                                {{ dislikeGenreLabel }}
+                            </button>
+                            <button type="button" class="action-split-item" @click.stop.prevent="selectDiscoveryFeedback('already_read')">
+                                {{ alreadyReadLabel }}
+                            </button>
+                        </div>
+                    </div>
 
                     <q-btn
                         v-if="showDiscoveryRestore"
@@ -381,6 +416,7 @@ class BookView {
     telegramMenuOpen = false;
     emailMenuOpen = false;
     formatMenuOpen = false;
+    discoveryFeedbackMenuOpen = false;
 
     created() {
         this.loadSettings();
@@ -630,6 +666,37 @@ class BookView {
         return (this.isCompactDiscoveryMode ? '\u0421\u043a\u0440\u044b\u0442\u044c' : this.discoveryDismissLabel);
     }
 
+    get effectiveMoreLikeThisLabel() {
+        return (this.isCompactDiscoveryMode ? '\u0415\u0449\u0451' : '\u0411\u043e\u043b\u044c\u0448\u0435 \u0442\u0430\u043a\u043e\u0433\u043e');
+    }
+
+    get effectiveDiscoveryReason() {
+        let result = String(this.book && this.book.discoveryReason || '').trim();
+        const genreMap = (this.genreMap instanceof Map ? this.genreMap : new Map());
+        for (const code of String(this.book && this.book.genre || '').split(',').map(item => item.trim()).filter(Boolean)) {
+            const label = genreMap.get(code);
+            if (label)
+                result = result.replace(new RegExp(`\\b${code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g'), label);
+        }
+        return result;
+    }
+
+    get discoveryFeedbackOptionsLabel() {
+        return '\u0423\u0442\u043e\u0447\u043d\u0438\u0442\u044c \u043f\u0440\u0438\u0447\u0438\u043d\u0443';
+    }
+
+    get dislikeAuthorLabel() {
+        return '\u041d\u0435 \u043b\u044e\u0431\u043b\u044e \u044d\u0442\u043e\u0433\u043e \u0430\u0432\u0442\u043e\u0440\u0430';
+    }
+
+    get dislikeGenreLabel() {
+        return '\u041d\u0435 \u043c\u043e\u0439 \u0436\u0430\u043d\u0440';
+    }
+
+    get alreadyReadLabel() {
+        return '\u0423\u0436\u0435 \u0447\u0438\u0442\u0430\u043b';
+    }
+
     get effectiveDiscoveryRestoreLabel() {
         return (this.isCompactDiscoveryMode ? '\u0412\u0435\u0440\u043d\u0443\u0442\u044c' : this.discoveryRestoreLabel);
     }
@@ -707,6 +774,7 @@ class BookView {
         this.telegramMenuOpen = false;
         this.emailMenuOpen = false;
         this.formatMenuOpen = false;
+        this.discoveryFeedbackMenuOpen = false;
     }
 
     toggleShareMenu(type) {
@@ -715,20 +783,35 @@ class BookView {
             if (this.telegramMenuOpen) {
                 this.emailMenuOpen = false;
                 this.formatMenuOpen = false;
+                this.discoveryFeedbackMenuOpen = false;
             }
         } else if (type == 'email') {
             this.emailMenuOpen = !this.emailMenuOpen;
             if (this.emailMenuOpen) {
                 this.telegramMenuOpen = false;
                 this.formatMenuOpen = false;
+                this.discoveryFeedbackMenuOpen = false;
             }
         } else if (type == 'format') {
             this.formatMenuOpen = !this.formatMenuOpen;
             if (this.formatMenuOpen) {
                 this.telegramMenuOpen = false;
                 this.emailMenuOpen = false;
+                this.discoveryFeedbackMenuOpen = false;
+            }
+        } else if (type == 'feedback') {
+            this.discoveryFeedbackMenuOpen = !this.discoveryFeedbackMenuOpen;
+            if (this.discoveryFeedbackMenuOpen) {
+                this.telegramMenuOpen = false;
+                this.emailMenuOpen = false;
+                this.formatMenuOpen = false;
             }
         }
+    }
+
+    selectDiscoveryFeedback(kind = 'not_interested') {
+        this.discoveryFeedbackMenuOpen = false;
+        this.emit('discoveryFeedback', kind);
     }
 
     selectShareFormat(type, format) {
@@ -993,6 +1076,9 @@ export default vueComponent(BookView);
 .book-card.is-compact-discovery .book-discovery-note {
     font-size: 12px;
     line-height: 1.3;
+}
+
+.book-card.is-compact-discovery .book-discovery-note span {
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -1420,11 +1506,25 @@ export default vueComponent(BookView);
 
 .book-discovery-note {
     grid-row: 5;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
     color: var(--app-muted);
     font-size: 13px;
     font-weight: 700;
     line-height: 1.35;
     padding-top: 2px;
+}
+
+.book-discovery-note :deep(.q-icon) {
+    flex: 0 0 auto;
+    margin-top: 1px;
+    color: var(--app-primary);
+    font-size: 16px;
+}
+
+.book-discovery-note--explore {
+    color: color-mix(in srgb, var(--app-text) 72%, var(--app-primary) 28%);
 }
 
 .book-genres {
@@ -1567,6 +1667,10 @@ export default vueComponent(BookView);
     font: inherit;
     cursor: pointer;
     text-decoration: none;
+}
+
+.discovery-feedback-menu {
+    min-width: 220px;
 }
 
 .action-split-item:hover {
