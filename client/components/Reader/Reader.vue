@@ -1786,6 +1786,7 @@ class Reader {
     compactChromeBuildLastActivityAt = 0;
     compactChromeStatusHold = false;
     compactChromeViewportRefreshSuppressedUntil = 0;
+    compactChromeTransitionId = 0;
     wakeLock = null;
     wakeLockSupported = false;
     wakeLockActive = false;
@@ -3641,8 +3642,15 @@ class Reader {
         if (this.chromeHidden === nextHidden)
             return;
 
+        const transitionId = ++this.compactChromeTransitionId;
         this.beginLayoutRefresh(this.isCompactLayout ? 'compact-chrome' : 'reader-chrome');
         if (this.isPagedMode) {
+            // A second center tap can arrive while pagination for the first
+            // chrome state is still running. Cancel that geometry immediately;
+            // waiting for the later ResizeObserver callback lets the stale job
+            // keep the compact-chrome pending flags alive indefinitely.
+            if (this.pagedBuildInProgress)
+                this.pagedBuildNeedsRefresh = true;
             this.compactChromePagedBuildPending = true;
             this.compactChromeAwaitingCalibration = true;
             this.compactChromeInitialTotalPages = Math.max(1, this.totalPages || 1);
@@ -3652,6 +3660,8 @@ class Reader {
         this.touchCompactChromeBuildActivity();
         this.cancelCompactChromeBuildPendingClear();
         await this.afterLayoutRefreshPaint();
+        if (transitionId !== this.compactChromeTransitionId)
+            return;
 
         this.chromeHidden = nextHidden;
         if (this.chromeHidden) {
@@ -3665,9 +3675,19 @@ class Reader {
         }
 
         this.$nextTick(() => {
-            this.runAfterLayoutRefreshPaint(() => {
+            if (transitionId !== this.compactChromeTransitionId)
+                return;
+            this.runAfterLayoutRefreshPaint(async() => {
+                if (transitionId !== this.compactChromeTransitionId)
+                    return;
+                if (this.pagedBuildInProgress)
+                    await this.waitForPagedBuildIdle(2400);
+                if (transitionId !== this.compactChromeTransitionId)
+                    return;
                 this.updateScrollerViewport();
                 requestAnimationFrame(() => {
+                    if (transitionId !== this.compactChromeTransitionId)
+                        return;
                     if (this.isPagedMode)
                         this.setCurrentPagedPage(this.currentPageIndex, false);
                     this.endLayoutRefresh(180);
@@ -8767,6 +8787,7 @@ class Reader {
         this.progressPersistPendingAfterPagedBuild = false;
         this.compactChromePagedBuildPending = false;
         this.compactChromeAwaitingCalibration = false;
+        this.compactChromeTransitionId += 1;
         this.dynamicBottomClipCompensationCompact = 0;
         this.dynamicBottomClipCompensationRegular = 0;
         this.bottomClipCompensationGeometryKey = '';

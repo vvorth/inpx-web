@@ -102,23 +102,64 @@
             <div class="discovery-taste-grid">
                 <q-select
                     v-model="tasteGenres"
+                    class="taste-genre-select"
                     outlined
                     dense
                     multiple
                     use-chips
+                    use-input
+                    clearable
+                    counter
                     emit-value
                     map-options
-                    :options="tasteGenreOptions"
+                    options-dense
+                    max-values="20"
+                    input-debounce="0"
+                    popup-content-style="height: min(420px, 58vh); min-height: min(420px, 58vh); max-height: min(420px, 58vh); overflow-y: auto"
+                    :options="visibleTasteGenreOptions"
                     label="Любимые жанры"
-                />
-                <q-input
-                    v-model="tasteAuthorsText"
+                    hint="Введите часть названия жанра"
+                    @clear="tasteGenres = []"
+                    @filter="filterTasteGenres"
+                >
+                    <template #no-option>
+                        <q-item>
+                            <q-item-section class="text-grey-7">
+                                Жанры не найдены
+                            </q-item-section>
+                        </q-item>
+                    </template>
+                </q-select>
+                <q-select
+                    v-model="tasteAuthors"
                     outlined
                     dense
+                    multiple
+                    use-chips
+                    use-input
                     clearable
+                    counter
+                    options-dense
+                    new-value-mode="add-unique"
+                    max-values="40"
+                    input-debounce="250"
+                    popup-content-style="height: min(320px, 46vh); min-height: min(320px, 46vh); max-height: min(320px, 46vh); overflow-y: auto"
+                    :options="tasteAuthorOptions"
+                    :loading="tasteAuthorsLoading"
                     label="Любимые авторы"
-                    hint="Через запятую"
-                />
+                    hint="Начните вводить фамилию или имя"
+                    @clear="tasteAuthors = []"
+                    @filter="filterTasteAuthors"
+                    @filter-abort="abortTasteAuthorFilter"
+                >
+                    <template #no-option>
+                        <q-item>
+                            <q-item-section class="text-grey-7">
+                                {{ tasteAuthorNoOptionsLabel }}
+                            </q-item-section>
+                        </q-item>
+                    </template>
+                </q-select>
                 <q-select
                     v-model="tasteLanguages"
                     outlined
@@ -281,7 +322,13 @@ class DiscoveryShelves extends BaseList {
     tasteSetupOpen = false;
     tasteHandledProfileKey = null;
     tasteGenres = [];
-    tasteAuthorsText = '';
+    tasteGenreFilteredOptions = null;
+    tasteAuthors = [];
+    tasteAuthorOptions = [];
+    tasteAuthorQuery = '';
+    tasteAuthorSearchSeq = 0;
+    tasteAuthorsLoading = false;
+    tasteAuthorSearchFailed = false;
     tasteLanguages = [];
     tasteExplorationRatio = 0.15;
 
@@ -313,8 +360,14 @@ class DiscoveryShelves extends BaseList {
         const entries = (this.genreMap instanceof Map ? Array.from(this.genreMap.entries()) : Object.entries(this.genreMap || {}));
         return entries
             .map(([value, label]) => ({value: String(value || '').trim(), label: String(label || value || '').trim()}))
-            .filter(item => item.value && item.label)
+            .filter(item => item.value && item.label && !/^\?+$/.test(item.label))
             .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
+    }
+
+    get visibleTasteGenreOptions() {
+        return (Array.isArray(this.tasteGenreFilteredOptions)
+            ? this.tasteGenreFilteredOptions
+            : this.tasteGenreOptions);
     }
 
     get tasteLanguageOptions() {
@@ -329,6 +382,16 @@ class DiscoveryShelves extends BaseList {
         ];
     }
 
+    get tasteAuthorNoOptionsLabel() {
+        if (this.tasteAuthorsLoading)
+            return 'Ищу авторов...';
+        if (this.tasteAuthorSearchFailed)
+            return 'Не удалось выполнить поиск';
+        if (this.tasteAuthorQuery.length < 2)
+            return 'Введите не менее двух букв';
+        return 'Авторы не найдены';
+    }
+
     get tasteExplorationOptions() {
         return [
             {label: 'Осторожно · 10%', value: 0.1},
@@ -339,8 +402,15 @@ class DiscoveryShelves extends BaseList {
 
     syncTasteEditor() {
         const taste = this.personalTaste;
-        this.tasteGenres = Array.isArray(taste.genres) ? taste.genres.slice() : [];
-        this.tasteAuthorsText = (Array.isArray(taste.authors) ? taste.authors : []).join(', ');
+        const allowedGenres = new Set(this.tasteGenreOptions.map(item => item.value));
+        const savedGenres = Array.isArray(taste.genres) ? taste.genres.slice() : [];
+        this.tasteGenres = (allowedGenres.size
+            ? savedGenres.filter(genre => allowedGenres.has(genre))
+            : savedGenres);
+        this.tasteAuthors = this.normalizeTasteAuthors(taste.authors);
+        this.tasteAuthorOptions = this.tasteAuthors.slice();
+        this.tasteAuthorQuery = '';
+        this.tasteAuthorSearchFailed = false;
         this.tasteLanguages = Array.isArray(taste.languages) ? taste.languages.slice() : [];
         this.tasteExplorationRatio = Number(taste.explorationRatio) || 0.15;
     }
@@ -351,13 +421,95 @@ class DiscoveryShelves extends BaseList {
             this.syncTasteEditor();
     }
 
+    filterTasteGenres(value, update) {
+        const normalize = input => String(input || '')
+            .toLocaleLowerCase('ru-RU')
+            .replace(/ё/g, 'е')
+            .replace(/\s+/g, ' ')
+            .trim();
+        const terms = normalize(value).split(' ').filter(Boolean);
+        update(() => {
+            this.tasteGenreFilteredOptions = (!terms.length
+                ? this.tasteGenreOptions
+                : this.tasteGenreOptions.filter((item) => {
+                    const searchable = normalize(`${item.label} ${item.value}`);
+                    return terms.every(term => searchable.includes(term));
+                }));
+        });
+    }
+
+    normalizeTasteAuthors(values, limit = 40) {
+        const result = [];
+        const seen = new Set();
+        for (const value of (Array.isArray(values) ? values : [])) {
+            const authors = String(value || '').split(/[,;\n]/);
+            for (const author of authors) {
+                const normalized = author.replace(/\s+/g, ' ').trim();
+                const key = normalized.toLocaleLowerCase('ru-RU').replace(/ё/g, 'е');
+                if (normalized && !seen.has(key)) {
+                    seen.add(key);
+                    result.push(normalized);
+                }
+            }
+        }
+        return result.slice(0, Math.max(0, Number(limit) || 40));
+    }
+
+    async filterTasteAuthors(value, update) {
+        const query = String(value || '').replace(/\s+/g, ' ').trim();
+        const requestSeq = ++this.tasteAuthorSearchSeq;
+        this.tasteAuthorQuery = query;
+        this.tasteAuthorSearchFailed = false;
+
+        if (query.length < 2) {
+            this.tasteAuthorsLoading = false;
+            update(() => {
+                this.tasteAuthorOptions = this.tasteAuthors.slice();
+            });
+            return;
+        }
+
+        this.tasteAuthorsLoading = true;
+        try {
+            const response = await this.api.search('author', {
+                author: query,
+                del: '0',
+                limit: 30,
+                offset: 0,
+            });
+            if (requestSeq !== this.tasteAuthorSearchSeq)
+                return;
+
+            update(() => {
+                const found = (response && Array.isArray(response.found) ? response.found : [])
+                    .map(item => String(item.author || '').replace(/\s+/g, ' ').trim())
+                    .filter(Boolean);
+                this.tasteAuthorOptions = this.normalizeTasteAuthors(this.tasteAuthors.concat(found), 70);
+                this.tasteAuthorsLoading = false;
+            });
+        } catch (e) {
+            if (requestSeq !== this.tasteAuthorSearchSeq)
+                return;
+            update(() => {
+                this.tasteAuthorOptions = [];
+                this.tasteAuthorsLoading = false;
+                this.tasteAuthorSearchFailed = true;
+            });
+        }
+    }
+
+    abortTasteAuthorFilter() {
+        this.tasteAuthorSearchSeq++;
+        this.tasteAuthorsLoading = false;
+    }
+
     saveTaste() {
-        const authors = String(this.tasteAuthorsText || '')
-            .split(/[,;\n]/)
-            .map(item => item.replace(/\s+/g, ' ').trim())
-            .filter(Boolean);
+        const allowedGenres = new Set(this.tasteGenreOptions.map(item => item.value));
+        const authors = this.normalizeTasteAuthors(this.tasteAuthors);
         this.$emit('save-taste', {
-            genres: this.tasteGenres,
+            genres: (Array.isArray(this.tasteGenres)
+                ? this.tasteGenres.filter(genre => allowedGenres.has(genre))
+                : []),
             authors,
             languages: this.tasteLanguages,
             explorationRatio: this.tasteExplorationRatio,

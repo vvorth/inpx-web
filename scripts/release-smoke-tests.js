@@ -442,6 +442,17 @@ async function testReaderDefersViewportRefreshAcrossScreenUnlock() {
     assert.match(readerSource, /await this\.waitForStablePagedStage\(\);\s*if \(this\.deferViewportRefreshForVisibility\(true\)\)/);
 }
 
+async function testReaderCancelsStaleCompactChromePagination() {
+    const readerSource = await fs.readFile(path.resolve(__dirname, '../client/components/Reader/Reader.vue'), 'utf8');
+
+    assert.match(readerSource, /compactChromeTransitionId = 0;/);
+    assert.match(readerSource, /const transitionId = \+\+this\.compactChromeTransitionId;/);
+    assert.match(readerSource, /if \(this\.pagedBuildInProgress\)\s*this\.pagedBuildNeedsRefresh = true;/);
+    assert.match(readerSource, /await this\.afterLayoutRefreshPaint\(\);\s*if \(transitionId !== this\.compactChromeTransitionId\)\s*return;/);
+    assert.match(readerSource, /if \(this\.pagedBuildInProgress\)\s*await this\.waitForPagedBuildIdle\(2400\);/);
+    assert.match(readerSource, /requestAnimationFrame\(\(\) => \{\s*if \(transitionId !== this\.compactChromeTransitionId\)/);
+}
+
 async function testReaderHomeFieldsIgnoreGlobalDarkTheme() {
     const readerSource = await fs.readFile(path.resolve(__dirname, '../client/components/Reader/Reader.vue'), 'utf8');
 
@@ -1414,6 +1425,7 @@ const tests = [
     testReaderTextShadowDefaultsOff,
     testReaderPaginationResumesAcrossViewportGeometry,
     testReaderDefersViewportRefreshAcrossScreenUnlock,
+    testReaderCancelsStaleCompactChromePagination,
     testReaderHomeFieldsIgnoreGlobalDarkTheme,
     testReaderImageDataUrlsAreValidated,
     testConvertedBookFileNames,
