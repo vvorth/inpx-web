@@ -2704,6 +2704,7 @@ class WebWorker {
             languages: normalizeTasteList(tasteValue.languages, 10).map(item => item.toLowerCase()),
             explorationRatio: Math.max(0.1, Math.min(0.3, Number(tasteValue.explorationRatio) || 0.15)),
             completedAt: String(tasteValue.completedAt || '').trim(),
+            promptDismissedAt: String(tasteValue.promptDismissedAt || '').trim(),
             updatedAt: String(tasteValue.updatedAt || '').trim(),
         };
         const profile = {
@@ -3022,7 +3023,7 @@ class WebWorker {
                 sourceName: '\u0414\u043b\u044f \u0432\u0430\u0441',
                 updatedAt: Date.now(),
                 discoveryTaste: profile.taste,
-                discoveryNeedsTasteSetup: !profile.taste.completedAt,
+                discoveryNeedsTasteSetup: !profile.taste.completedAt && !profile.taste.promptDismissedAt,
                 items: [],
                 emptyMessage: '\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u043b\u044e\u0431\u0438\u043c\u044b\u0435 \u0436\u0430\u043d\u0440\u044b, \u0430\u0432\u0442\u043e\u0440\u043e\u0432 \u0438\u043b\u0438 \u044f\u0437\u044b\u043a\u0438 \u0432\u044b\u0448\u0435 \u2014 \u043b\u0438\u0431\u043e \u043d\u0430\u0447\u043d\u0438\u0442\u0435 \u0447\u0438\u0442\u0430\u0442\u044c.',
             };
@@ -3238,7 +3239,7 @@ class WebWorker {
             updatedAt: profile.updatedAt || Date.now(),
             discoveryHasMore: hasMore,
             discoveryTaste: profile.taste,
-            discoveryNeedsTasteSetup: !profile.taste.completedAt && profile.signalCount === 0,
+            discoveryNeedsTasteSetup: !profile.taste.completedAt && !profile.taste.promptDismissedAt,
             discoveryExplorationRatio: explorationRatio,
             items: visibleItems,
             emptyMessage: '\u041f\u043e\u043a\u0430 \u043c\u0430\u043b\u043e \u0434\u0430\u043d\u043d\u044b\u0445 \u0434\u043b\u044f \u0440\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0430\u0446\u0438\u0439. \u041f\u043e\u0447\u0438\u0442\u0430\u0439\u0442\u0435 \u0435\u0449\u0451 \u043d\u0435\u043c\u043d\u043e\u0433\u043e \u0438\u043b\u0438 \u0434\u043e\u0431\u0430\u0432\u044c\u0442\u0435 \u043a\u043d\u0438\u0433\u0438 \u0432 \u0441\u043f\u0438\u0441\u043a\u0438.',

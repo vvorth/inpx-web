@@ -420,6 +420,28 @@ async function testReaderTextShadowDefaultsOff() {
     assert.match(readerSource, /defaultReaderPreferences = _\.cloneDeep\(this\.preferences\);/);
 }
 
+async function testReaderPaginationResumesAcrossViewportGeometry() {
+    const readerSource = await fs.readFile(path.resolve(__dirname, '../client/components/Reader/Reader.vue'), 'utf8');
+
+    assert.match(readerSource, /pagedLayoutCache = new Map\(\);\s*pagedLayoutCacheLimit = 2;/);
+    assert.match(readerSource, /const checkpoint = \(cachedLayout && cachedLayout\.type === 'partial'\)/);
+    assert.match(readerSource, /for \(let index = startIndex; index < queue\.length; index \+= 1\)/);
+    assert.match(readerSource, /storePartialLayout\(index\);\s*return false;/);
+    assert.match(readerSource, /type: 'complete',\s*pages: finalPages/);
+    assert.match(readerSource, /async loadReader\(\) \{[\s\S]{0,400}this\.pagedLayoutCache\.clear\(\);/);
+}
+
+async function testReaderDefersViewportRefreshAcrossScreenUnlock() {
+    const readerSource = await fs.readFile(path.resolve(__dirname, '../client/components/Reader/Reader.vue'), 'utf8');
+
+    assert.match(readerSource, /document\.visibilityState === 'hidden'[\s\S]{0,140}this\.suspendViewportRefreshForVisibility\(\);/);
+    assert.match(readerSource, /document\.visibilityState === 'visible'[\s\S]{0,140}this\.resumeViewportRefreshAfterVisibility\(\);/);
+    assert.match(readerSource, /resumeViewportRefreshAfterVisibility\(\) \{[\s\S]{0,500}this\.viewportResumeGuardUntil = Date\.now\(\) \+ 520;/);
+    assert.match(readerSource, /deferViewportRefreshForVisibility\(calibrate = true\)[\s\S]{0,700}Date\.now\(\) \+ 220/);
+    assert.match(readerSource, /scheduleViewportRefresh\(\{calibrate = true\} = \{\}\) \{[\s\S]{0,180}this\.deferViewportRefreshForVisibility\(calibrate\)/);
+    assert.match(readerSource, /await this\.waitForStablePagedStage\(\);\s*if \(this\.deferViewportRefreshForVisibility\(true\)\)/);
+}
+
 async function testReaderHomeFieldsIgnoreGlobalDarkTheme() {
     const readerSource = await fs.readFile(path.resolve(__dirname, '../client/components/Reader/Reader.vue'), 'utf8');
 
@@ -1117,7 +1139,10 @@ async function testDiscoveryFeedbackAndEventsPersist() {
         });
         await store.save({
             version: 5,
-            users: [{id: 'reader-feedback', name: 'Reader'}],
+            users: [
+                {id: 'reader-feedback', name: 'Reader'},
+                {id: 'reader-dismiss', name: 'Reader Dismiss'},
+            ],
             lists: [],
         });
 
@@ -1175,6 +1200,12 @@ async function testDiscoveryFeedbackAndEventsPersist() {
         });
         assert.ok(!preferences.hiddenBooks.includes('book:author'));
         assert.strictEqual(preferences.feedback['book:author'], undefined);
+
+        const dismissedPreferences = await store.updateDiscoveryPreferences('reader-dismiss', {
+            tastePromptDismissedAt: '2026-07-14T00:00:00.000Z',
+        });
+        assert.strictEqual(dismissedPreferences.taste.completedAt, '');
+        assert.strictEqual(dismissedPreferences.taste.promptDismissedAt, '2026-07-14T00:00:00.000Z');
     });
 }
 
@@ -1357,8 +1388,17 @@ async function testPersonalDiscoveryDiversifiesAuthorsAndSeries() {
             assert.ok(shelf.items.some(book => book.author !== 'Favorite Author'));
             assert.ok(shelf.items.some(book => book.discoveryExploration === true));
             assert.ok(shelf.items.find(book => book.discoveryExploration === true).discoveryReason.includes('нового'));
+            assert.strictEqual(shelf.discoveryNeedsTasteSetup, true);
             assert.ok(favoriteAuthorCount <= 2);
             assert.ok(sagaACount <= 1);
+
+            user.discoveryPreferences.taste = {promptDismissedAt: '2026-07-14T00:00:00.000Z'};
+            const dismissedShelf = await worker.buildSimilarBooksShelfV2(user, 4, {
+                lists: [],
+                progressMap: user.readerProgress,
+                readBookUids: new Set(['favorite']),
+            });
+            assert.strictEqual(dismissedShelf.discoveryNeedsTasteSetup, false);
         } finally {
             await db.unlock();
         }
@@ -1372,6 +1412,8 @@ const tests = [
     testReaderAnnotationStaysOutsideReadingFlow,
     testReaderBookNotesMenuAndReturnLayout,
     testReaderTextShadowDefaultsOff,
+    testReaderPaginationResumesAcrossViewportGeometry,
+    testReaderDefersViewportRefreshAcrossScreenUnlock,
     testReaderHomeFieldsIgnoreGlobalDarkTheme,
     testReaderImageDataUrlsAreValidated,
     testConvertedBookFileNames,

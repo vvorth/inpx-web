@@ -424,6 +424,7 @@
                     :section-title="getRouteLabel(selectedList)"
                     :compact-mode="compactDiscoveryCards"
                     :personal-mode="selectedList === 'for-you'"
+                    :profile-key="currentUserId"
                     :external-filter="discoveryExternalFilter"
                     :show-external-filter="selectedList === 'bestsellers'"
                     :external-genre-options="externalDiscoveryGenreOptions"
@@ -444,6 +445,7 @@
                     @dismiss-book="dismissDiscoveryBook"
                     @feedback-book="setDiscoveryFeedback"
                     @save-taste="saveDiscoveryTaste"
+                    @dismiss-taste="dismissDiscoveryTasteSetup"
                     @restore-book="restoreDiscoveryBook"
                     @discovery-interaction="recordDiscoveryInteraction"
                     @toggle-unread-only="toggleDiscoveryUnreadOnly"
@@ -1999,6 +2001,19 @@ class Search {
             this.discoveryShelvesCacheKey = '';
             await this.refreshDiscoveryShelves(true);
             this.$root.notify.success('Вкусы сохранены. Персональная подборка обновлена.');
+        } catch (e) {
+            this.$root.stdDialog.alert(e.message, 'Ошибка');
+        }
+    }
+
+    async dismissDiscoveryTasteSetup() {
+        try {
+            await this.api.updateDiscoveryPreferences({
+                tastePromptDismissedAt: new Date().toISOString(),
+            });
+            this.discoveryShelvesCacheKey = '';
+            await this.refreshDiscoveryShelves(true);
+            this.$root.notify.info('Вкусы можно настроить позже на странице «Для вас».');
         } catch (e) {
             this.$root.stdDialog.alert(e.message, 'Ошибка');
         }

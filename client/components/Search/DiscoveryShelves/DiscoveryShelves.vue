@@ -96,7 +96,7 @@
             <div class="discovery-taste-copy">
                 <div class="discovery-taste-title">Что вам нравится читать?</div>
                 <div class="discovery-taste-subtitle">
-                    Это особенно помогает новому профилю. Настройки можно изменить в любой момент.
+                    Выберите жанры, авторов и языки — это уточнит рекомендации даже для давно используемого профиля. Настройки можно изменить в любой момент.
                 </div>
             </div>
             <div class="discovery-taste-grid">
@@ -144,7 +144,10 @@
                 <q-btn color="primary" unelevated no-caps icon="la la-check" @click.stop.prevent="saveTaste">
                     Сохранить вкусы
                 </q-btn>
-                <q-btn v-if="!personalTasteNeedsSetup" flat no-caps @click.stop.prevent="tasteSetupOpen = false">
+                <q-btn v-if="personalTasteNeedsSetup" flat no-caps @click.stop.prevent="dismissTasteSetup">
+                    Не сейчас
+                </q-btn>
+                <q-btn v-else flat no-caps @click.stop.prevent="tasteSetupOpen = false">
                     Закрыть
                 </q-btn>
             </div>
@@ -258,6 +261,7 @@ class DiscoveryShelves extends BaseList {
         sectionTitle: String,
         compactMode: Boolean,
         personalMode: Boolean,
+        profileKey: String,
         externalFilter: { type: String, default: 'books'},
         externalGenreOptions: { type: Array, default: () => []},
         externalGenreUrl: { type: String, default: ''},
@@ -275,7 +279,7 @@ class DiscoveryShelves extends BaseList {
     };
 
     tasteSetupOpen = false;
-    tasteLocalCompleted = false;
+    tasteHandledProfileKey = null;
     tasteGenres = [];
     tasteAuthorsText = '';
     tasteLanguages = [];
@@ -296,7 +300,9 @@ class DiscoveryShelves extends BaseList {
     }
 
     get personalTasteNeedsSetup() {
-        return this.personalTasteShelf.discoveryNeedsTasteSetup === true && !this.tasteLocalCompleted;
+        const profileKey = String(this.profileKey || '');
+        return this.personalTasteShelf.discoveryNeedsTasteSetup === true
+            && this.tasteHandledProfileKey !== profileKey;
     }
 
     get showTasteSetup() {
@@ -357,7 +363,13 @@ class DiscoveryShelves extends BaseList {
             explorationRatio: this.tasteExplorationRatio,
             completedAt: new Date().toISOString(),
         });
-        this.tasteLocalCompleted = true;
+        this.tasteHandledProfileKey = String(this.profileKey || '');
+        this.tasteSetupOpen = false;
+    }
+
+    dismissTasteSetup() {
+        this.$emit('dismiss-taste');
+        this.tasteHandledProfileKey = String(this.profileKey || '');
         this.tasteSetupOpen = false;
     }
 

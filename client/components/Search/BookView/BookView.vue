@@ -1642,6 +1642,24 @@ export default vueComponent(BookView);
     flex: 1 1 auto;
 }
 
+.discovery-feedback-split :deep(.q-btn) {
+    width: auto;
+    min-width: 0;
+    padding-left: 6px;
+    padding-right: 2px;
+}
+
+.discovery-feedback-split :deep(.q-btn__content) {
+    flex-wrap: nowrap;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.discovery-feedback-split .action-split-toggle {
+    flex: 0 0 28px;
+    width: 28px;
+}
+
 .action-split-toggle {
     display: inline-flex;
     align-items: center;
@@ -2054,6 +2072,11 @@ export default vueComponent(BookView);
         font-size: 12px;
     }
 
+    .book-actions .discovery-feedback-split :deep(.q-btn) {
+        padding-left: 4px;
+        padding-right: 2px;
+    }
+
     .action-split-toggle {
         height: 34px;
     }
@@ -2078,6 +2101,12 @@ export default vueComponent(BookView);
         block-size: auto;
         font-size: 16px;
         -webkit-line-clamp: 2;
+    }
+}
+
+@media (max-width: 380px) {
+    .book-actions .discovery-feedback-split {
+        grid-column: 1 / -1;
     }
 }
 

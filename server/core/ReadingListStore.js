@@ -428,6 +428,7 @@ class ReadingListStore {
             languages: normalizeTasteList(tasteValue.languages, 10, 20).map(item => item.toLowerCase()),
             explorationRatio: Math.max(0.1, Math.min(0.3, Number(tasteValue.explorationRatio) || 0.15)),
             completedAt: String(tasteValue.completedAt || '').trim(),
+            promptDismissedAt: String(tasteValue.promptDismissedAt || '').trim(),
             updatedAt: String(tasteValue.updatedAt || '').trim(),
         };
 
@@ -1146,6 +1147,14 @@ class ReadingListStore {
                 taste: Object.assign({}, taste, patch.taste || {}, {
                     completedAt: String(patch.taste && patch.taste.completedAt || taste.completedAt || this.nowIso()),
                     updatedAt: this.nowIso(),
+                }),
+            }).taste;
+        }
+
+        if (utilsHasProp(patch, 'tastePromptDismissedAt')) {
+            taste = this.normalizeDiscoveryPreferences({
+                taste: Object.assign({}, taste, {
+                    promptDismissedAt: String(patch.tastePromptDismissedAt || this.nowIso()),
                 }),
             }).taste;
         }
