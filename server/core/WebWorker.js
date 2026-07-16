@@ -5680,24 +5680,20 @@ class WebWorker {
         const sourceFormat = String(rows[0].ext || '').toLowerCase();
 
         if (targetFormat && targetFormat !== sourceFormat) {
-            if (!bookConverter.canConvertSourceTo(sourceFormat, targetFormat))
-                throw new Error(`Неподдерживаемый формат отправки: ${targetFormat}`);
-
-            if (!this.config.conversionEnabled)
-                throw new Error('Конвертация книг отключена в текущем образе.');
-
-            preparedFile = `${gzipFile}.${targetFormat}`;
-            if (!await fs.pathExists(preparedFile)) {
-                await bookConverter.convert({
-                    inputFile: rawFile,
-                    outputFile: preparedFile,
-                    format: targetFormat,
-                    sourceFileName: downFileName,
-                    converterPaths: this.config.converterPaths,
-                });
+            const prepared = await bookConverter.prepareConvertedFile({
+                inputFile: rawFile,
+                cacheBasePath: gzipFile,
+                format: targetFormat,
+                sourceFileName: downFileName,
+                downFileName,
+                config: this.config,
+                unsupportedMessage: `Неподдерживаемый формат отправки: ${targetFormat}`,
+                disabledMessage: 'Конвертация книг отключена в текущем образе.',
+            });
+            preparedFile = prepared.filePath;
+            preparedFileName = prepared.downloadName;
+            if (prepared.created)
                 cacheChanged = true;
-            }
-            preparedFileName = bookConverter.getConvertedFileName(downFileName, targetFormat);
             await utils.touchFile(preparedFile);
         }
 

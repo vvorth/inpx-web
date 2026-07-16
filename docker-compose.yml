@@ -11,6 +11,9 @@ services:
       LIBDIR: /library
       CACHE_DIR: /usr/local/bin/.inpx-web/cache
       INPX_COVER_CACHE_SIZE_MB: "512"
+      # Optional custom fb2cng YAML. Mount its whole directory read-only below.
+      # INPX_FB2CNG_CONFIG: /config/fb2cng/config.yaml
     volumes:
       - ./library:/library:ro
       - ./data:/usr/local/bin/.inpx-web
+      # - ./fb2cng-config:/config/fb2cng:ro

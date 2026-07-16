@@ -256,4 +256,6 @@ class ConfigManager {
     }
 }
 
+ConfigManager.propsToSave = propsToSave;
+
 module.exports = ConfigManager;

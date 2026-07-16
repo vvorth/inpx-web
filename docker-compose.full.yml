@@ -13,8 +13,11 @@ services:
       LIBDIR: /library
       CACHE_DIR: /usr/local/bin/.inpx-web/cache
       INPX_COVER_CACHE_SIZE_MB: "512"
+      # Optional custom fb2cng YAML. Mount its whole directory read-only below.
+      # INPX_FB2CNG_CONFIG: /config/fb2cng/config.yaml
     volumes:
       - /mnt/user/appdata/inpx-web:/usr/local/bin/.inpx-web
       # Left side is a host path, right side is a path inside the container.
       # INPX=/library/... and LIBDIR=/library must point to this mounted path.
       - /mnt/user/books/my-library:/library:ro
+      # - /mnt/user/appdata/inpx-web-fb2cng:/config/fb2cng:ro

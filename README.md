@@ -105,6 +105,25 @@ docker build --no-cache -t inpx-web-7z:latest .
 docker compose up -d
 ```
 
+### Пользовательский конфиг fb2cng
+
+Свой YAML-конфиг fb2cng можно передать через `INPX_FB2CNG_CONFIG`. Переменная `FB2CNG_CONFIG` поддерживается как совместимый alias, но `INPX_FB2CNG_CONFIG` имеет приоритет. Путь берётся только из окружения и не сохраняется в `config.json`, поэтому его можно менять или удалять при пересоздании контейнера.
+
+Монтируйте read-only весь каталог конфига, а не только YAML: конфиг fb2cng может ссылаться на CSS, шрифты и другие файлы рядом с ним.
+
+```sh
+docker run -d \
+  --name=inpx-web \
+  -p 12380:12380 \
+  -e INPX_FB2CNG_CONFIG=/config/fb2cng/config.yaml \
+  -v /path/on/host/fb2cng:/config/fb2cng:ro \
+  -v /path/on/host/library:/library:ro \
+  -v /path/on/host/data:/usr/local/bin/.inpx-web \
+  aceasket/inpx-web-7z:latest
+```
+
+При первом обращении к конвертации приложение проверяет, что файл существует, читается и принимается командой `fbc --config PATH dumpconfig`. Ошибочный путь или YAML возвращает явную ошибку вместо незаметного запуска с настройками по умолчанию. Кэш учитывает логический формат (`epub` и `epub3` раздельно), содержимое и расположение YAML, версию встроенного fb2cng и настроенные пути конвертеров.
+
 или напрямую через `docker run` с тегом `aceasket/inpx-web-7z:latest`.
 
 ### Обновление контейнера
