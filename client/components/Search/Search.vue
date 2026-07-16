@@ -424,6 +424,7 @@
                     :section-title="getRouteLabel(selectedList)"
                     :compact-mode="compactDiscoveryCards"
                     :personal-mode="selectedList === 'for-you'"
+                    :profile-key="currentUserId"
                     :external-filter="discoveryExternalFilter"
                     :show-external-filter="selectedList === 'bestsellers'"
                     :external-genre-options="externalDiscoveryGenreOptions"
@@ -442,7 +443,11 @@
                     @refresh-shelves="refreshDiscoveryShelves(true)"
                     @hide-shelf="hideDiscoveryShelf"
                     @dismiss-book="dismissDiscoveryBook"
+                    @feedback-book="setDiscoveryFeedback"
+                    @save-taste="saveDiscoveryTaste"
+                    @dismiss-taste="dismissDiscoveryTasteSetup"
                     @restore-book="restoreDiscoveryBook"
+                    @discovery-interaction="recordDiscoveryInteraction"
                     @toggle-unread-only="toggleDiscoveryUnreadOnly"
                     @toggle-compact="toggleCompactDiscoveryCards"
                     @set-external-filter="setDiscoveryExternalFilter"
@@ -1235,6 +1240,7 @@ class Search {
                         .filter((book) => !(this.showDiscoveryUnreadOnly === true && book && book.discoveryRead === true && String(shelf.id || '') !== 'hidden-books'))
                         .map((book) => ({
                             ...book,
+                            discoveryShelfId: String(shelf.id || ''),
                             discoveryDismissible: (String(shelf.id || '') !== 'hidden-books'),
                             discoveryDismissLabel: 'Неинтересно',
                             discoveryRestoreable: (String(shelf.id || '') === 'hidden-books'),
@@ -1934,16 +1940,36 @@ class Search {
     }
 
     async dismissDiscoveryBook(book = {}) {
+        await this.setDiscoveryFeedback({book, kind: 'not_interested'});
+    }
+
+    async setDiscoveryFeedback(payload = {}) {
+        const book = (payload && payload.book ? payload.book : payload);
+        const kind = String(payload && payload.kind || 'not_interested').trim().toLowerCase();
         const bookUid = String(book._uid || book.bookUid || '').trim();
         if (!bookUid)
             return;
 
         try {
-            await this.api.updateDiscoveryPreferences({hiddenBooksAdd: [bookUid]});
+            await this.api.updateDiscoveryPreferences({
+                feedbackSet: [{
+                    bookUid,
+                    kind,
+                    shelfId: String(book.discoveryShelfId || 'similar-books'),
+                }],
+            });
             this.discoverySimilarExhausted = false;
             this.discoveryShelvesCacheKey = '';
             await this.refreshDiscoveryShelves(true);
-            this.$root.notify.success('Книга скрыта из персональных витрин.');
+            const messages = {
+                more_like_this: 'Будем показывать больше похожих книг.',
+                dislike_author: 'Автор будет реже появляться в рекомендациях.',
+                dislike_genre: 'Этот жанр будет реже появляться в рекомендациях.',
+                already_read: 'Книга убрана из рекомендаций.',
+                ignore_for_taste: 'Книга больше не влияет на ваши вкусы и остаётся доступной в библиотеке.',
+                not_interested: 'Книга скрыта из персональных витрин.',
+            };
+            this.$root.notify.success(messages[kind] || messages.not_interested);
         } catch (e) {
             this.$root.stdDialog.alert(e.message, 'Ошибка');
         }
@@ -1955,7 +1981,10 @@ class Search {
             return;
 
         try {
-            await this.api.updateDiscoveryPreferences({hiddenBooksRemove: [bookUid]});
+            await this.api.updateDiscoveryPreferences({
+                hiddenBooksRemove: [bookUid],
+                feedbackRemove: [bookUid],
+            });
             this.discoverySimilarExhausted = false;
             this.discoveryShelvesCacheKey = '';
             await this.refreshDiscoveryShelves(true);
@@ -1963,6 +1992,59 @@ class Search {
         } catch (e) {
             this.$root.stdDialog.alert(e.message, 'Ошибка');
         }
+    }
+
+    async saveDiscoveryTaste(taste = {}) {
+        try {
+            await this.api.updateDiscoveryPreferences({taste});
+            this.discoverySimilarExhausted = false;
+            this.discoveryShelvesCacheKey = '';
+            await this.refreshDiscoveryShelves(true);
+            this.$root.notify.success('Вкусы сохранены. Персональная подборка обновлена.');
+        } catch (e) {
+            this.$root.stdDialog.alert(e.message, 'Ошибка');
+        }
+    }
+
+    async dismissDiscoveryTasteSetup() {
+        try {
+            await this.api.updateDiscoveryPreferences({
+                tastePromptDismissedAt: new Date().toISOString(),
+            });
+            this.discoveryShelvesCacheKey = '';
+            await this.refreshDiscoveryShelves(true);
+            this.$root.notify.info('Вкусы можно настроить позже на странице «Для вас».');
+        } catch (e) {
+            this.$root.stdDialog.alert(e.message, 'Ошибка');
+        }
+    }
+
+    recordDiscoveryInteraction(payload = {}) {
+        const book = payload && payload.book || {};
+        const bookUid = String(book._uid || book.bookUid || '').trim();
+        const type = String(payload && payload.type || '').trim().toLowerCase();
+        if (!bookUid || !type)
+            return;
+        this.api.recordDiscoveryEvents([{
+            bookUid,
+            type,
+            shelfId: String(book.discoveryShelfId || ''),
+        }]).catch(() => {});
+    }
+
+    recordDiscoveryImpressions(shelves = []) {
+        if (this.selectedList !== 'for-you')
+            return;
+        const events = (Array.isArray(shelves) ? shelves : [])
+            .filter(shelf => shelf && String(shelf.id || '') !== 'hidden-books')
+            .flatMap(shelf => (Array.isArray(shelf.items) ? shelf.items : []).map(book => ({
+                bookUid: String(book && (book._uid || book.bookUid) || '').trim(),
+                type: 'impression',
+                shelfId: String(shelf.id || 'unknown'),
+            })))
+            .filter(item => item.bookUid);
+        if (events.length)
+            this.api.recordDiscoveryEvents(events).catch(() => {});
     }
 
     async openUserProfilesDialog() {
@@ -2277,6 +2359,7 @@ class Search {
             if (requestSeq === this.discoveryShelvesRequestSeq && this.showDiscoveryShelves) {
                 this.discoveryShelves = (response && Array.isArray(response.shelves) ? response.shelves : []);
                 this.discoveryShelvesCacheKey = cacheKey;
+                this.recordDiscoveryImpressions(this.discoveryShelves);
             }
         } catch (e) {
             if (requestSeq === this.discoveryShelvesRequestSeq && this.showDiscoveryShelves) {

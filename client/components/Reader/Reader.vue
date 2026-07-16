@@ -1535,7 +1535,7 @@ import he from 'he';
 
 const readerPreferencesStorageKey = 'inpx.reader.preferences.v1';
 const readerProgressStorageKey = 'inpx.reader.progress.v1';
-const readerPreferencesVersion = 2;
+const readerPreferencesVersion = 3;
 const readerDeviceProfileKeys = ['regularProfile', 'compactProfile'];
 const readerDeviceScopedPreferenceKeys = new Set([
     'readMode',
@@ -1670,7 +1670,7 @@ class Reader {
         lineHeight: 1.7,
         textShadow: false,
         contentWidth: 1040,
-        contentWidthMode: 'fixed',
+        contentWidthMode: 'viewport',
         backgroundImage: '',
         backgroundImageName: '',
         backgroundTransparentPages: false,
@@ -1762,6 +1762,10 @@ class Reader {
     pagedViewportFrame = 0;
     pagedViewportBuildQueued = false;
     viewportRefreshFrame = 0;
+    viewportResumeTimer = null;
+    viewportResumePending = false;
+    viewportResumeNeedsCalibration = false;
+    viewportResumeGuardUntil = 0;
     pagedBuildInProgress = false;
     pagedBuildNeedsRefresh = false;
     pagedBuildOwnerJobId = 0;
@@ -1771,6 +1775,8 @@ class Reader {
     progressPersistPendingAfterPagedBuild = false;
     pagedBuildJobId = 0;
     pagedLayoutSignature = '';
+    pagedLayoutCache = new Map();
+    pagedLayoutCacheLimit = 2;
     restoreProgressFrame = 0;
     compactChromePagedBuildPending = false;
     compactChromeAwaitingCalibration = false;
@@ -1780,6 +1786,7 @@ class Reader {
     compactChromeBuildLastActivityAt = 0;
     compactChromeStatusHold = false;
     compactChromeViewportRefreshSuppressedUntil = 0;
+    compactChromeTransitionId = 0;
     wakeLock = null;
     wakeLockSupported = false;
     wakeLockActive = false;
@@ -1876,10 +1883,14 @@ class Reader {
         this.handleVisibilityChange = () => {
             if (document.visibilityState === 'hidden') {
                 this.flushProgress();
+                this.suspendViewportRefreshForVisibility();
                 return;
             }
-            if (document.visibilityState === 'visible' && this.wakeLockRequested)
-                this.requestWakeLock();// no await
+            if (document.visibilityState === 'visible') {
+                this.resumeViewportRefreshAfterVisibility();
+                if (this.wakeLockRequested)
+                    this.requestWakeLock();// no await
+            }
         };
         this.handlePageHide = () => {
             this.flushProgress();
@@ -1957,10 +1968,18 @@ class Reader {
             this.pagedViewportFrame = 0;
         }
         this.pagedViewportBuildQueued = false;
+        this.pagedLayoutCache.clear();
         if (this.viewportRefreshFrame) {
             cancelAnimationFrame(this.viewportRefreshFrame);
             this.viewportRefreshFrame = 0;
         }
+        if (this.viewportResumeTimer) {
+            clearTimeout(this.viewportResumeTimer);
+            this.viewportResumeTimer = null;
+        }
+        this.viewportResumePending = false;
+        this.viewportResumeNeedsCalibration = false;
+        this.viewportResumeGuardUntil = 0;
         if (this.bottomCalibrationFrame) {
             cancelAnimationFrame(this.bottomCalibrationFrame);
             this.bottomCalibrationFrame = 0;
@@ -2234,7 +2253,7 @@ class Reader {
             prefs.fontFamily || 'serif',
             prefs.fontSize || 18,
             prefs.contentWidth || 1040,
-            prefs.contentWidthMode || 'fixed',
+            prefs.contentWidthMode || 'viewport',
             prefs.pagedSpreadMode || 'single',
             prefs.dualPageGap || 28,
             preferenceValue('pagePaddingTop', verticalPadding),
@@ -3623,8 +3642,15 @@ class Reader {
         if (this.chromeHidden === nextHidden)
             return;
 
+        const transitionId = ++this.compactChromeTransitionId;
         this.beginLayoutRefresh(this.isCompactLayout ? 'compact-chrome' : 'reader-chrome');
         if (this.isPagedMode) {
+            // A second center tap can arrive while pagination for the first
+            // chrome state is still running. Cancel that geometry immediately;
+            // waiting for the later ResizeObserver callback lets the stale job
+            // keep the compact-chrome pending flags alive indefinitely.
+            if (this.pagedBuildInProgress)
+                this.pagedBuildNeedsRefresh = true;
             this.compactChromePagedBuildPending = true;
             this.compactChromeAwaitingCalibration = true;
             this.compactChromeInitialTotalPages = Math.max(1, this.totalPages || 1);
@@ -3634,6 +3660,8 @@ class Reader {
         this.touchCompactChromeBuildActivity();
         this.cancelCompactChromeBuildPendingClear();
         await this.afterLayoutRefreshPaint();
+        if (transitionId !== this.compactChromeTransitionId)
+            return;
 
         this.chromeHidden = nextHidden;
         if (this.chromeHidden) {
@@ -3647,9 +3675,19 @@ class Reader {
         }
 
         this.$nextTick(() => {
-            this.runAfterLayoutRefreshPaint(() => {
+            if (transitionId !== this.compactChromeTransitionId)
+                return;
+            this.runAfterLayoutRefreshPaint(async() => {
+                if (transitionId !== this.compactChromeTransitionId)
+                    return;
+                if (this.pagedBuildInProgress)
+                    await this.waitForPagedBuildIdle(2400);
+                if (transitionId !== this.compactChromeTransitionId)
+                    return;
                 this.updateScrollerViewport();
                 requestAnimationFrame(() => {
+                    if (transitionId !== this.compactChromeTransitionId)
+                        return;
                     if (this.isPagedMode)
                         this.setCurrentPagedPage(this.currentPageIndex, false);
                     this.endLayoutRefresh(180);
@@ -3894,7 +3932,12 @@ class Reader {
             readMode: nextMode,
         });
         this.savePreferencesDebounced();
-        this.requestReaderSettingsReflow();
+        // On desktop the settings panel is an overlay, so it is safe to rebuild
+        // immediately. Deferring a mode switch hides the scroll content at once
+        // but never starts pagination until the panel is closed, leaving the
+        // preparing sheet on screen indefinitely. Compact settings still defer
+        // because their sheet temporarily changes the usable viewport height.
+        this.requestReaderSettingsReflow({immediate: !this.isCompactLayout});
     }
 
     async setPagedDirection(direction = 'vertical') {
@@ -4247,8 +4290,83 @@ class Reader {
         }
     }
 
+    suspendViewportRefreshForVisibility() {
+        this.viewportResumePending = true;
+        this.viewportResumeNeedsCalibration = true;
+        this.viewportResumeGuardUntil = 0;
+        if (this.viewportResumeTimer) {
+            clearTimeout(this.viewportResumeTimer);
+            this.viewportResumeTimer = null;
+        }
+        if (this.viewportRefreshFrame) {
+            cancelAnimationFrame(this.viewportRefreshFrame);
+            this.viewportRefreshFrame = 0;
+        }
+        if (this.pagedViewportFrame) {
+            cancelAnimationFrame(this.pagedViewportFrame);
+            this.pagedViewportFrame = 0;
+            this.pagedViewportBuildQueued = false;
+        }
+    }
+
+    resumeViewportRefreshAfterVisibility() {
+        // Mobile browsers restore their system bars in several steps after the
+        // screen is unlocked. Keep the last committed page geometry until that
+        // burst becomes quiet instead of paginating every intermediate height.
+        this.viewportResumePending = true;
+        this.viewportResumeNeedsCalibration = true;
+        this.viewportResumeGuardUntil = Date.now() + 520;
+        this.scheduleDeferredViewportRefresh();
+    }
+
+    scheduleDeferredViewportRefresh(delayMs = 0) {
+        if (this.viewportResumeTimer)
+            clearTimeout(this.viewportResumeTimer);
+
+        const remainingGuard = Math.max(0, this.viewportResumeGuardUntil - Date.now());
+        const waitMs = Math.max(80, remainingGuard, Math.round(Number(delayMs || 0) || 0));
+        this.viewportResumeTimer = setTimeout(() => {
+            this.viewportResumeTimer = null;
+            if (typeof document !== 'undefined' && document.visibilityState === 'hidden')
+                return;
+
+            const remaining = Math.max(0, this.viewportResumeGuardUntil - Date.now());
+            if (remaining > 0) {
+                this.scheduleDeferredViewportRefresh(remaining);
+                return;
+            }
+
+            const shouldRefresh = this.viewportResumePending;
+            const calibrate = this.viewportResumeNeedsCalibration;
+            this.viewportResumePending = false;
+            this.viewportResumeNeedsCalibration = false;
+            this.viewportResumeGuardUntil = 0;
+            if (shouldRefresh)
+                this.scheduleViewportRefresh({calibrate});
+        }, waitMs);
+    }
+
+    deferViewportRefreshForVisibility(calibrate = true) {
+        const hidden = (typeof document !== 'undefined' && document.visibilityState === 'hidden');
+        const guarded = Date.now() < (Number(this.viewportResumeGuardUntil || 0) || 0);
+        if (!hidden && !guarded)
+            return false;
+
+        this.viewportResumePending = true;
+        this.viewportResumeNeedsCalibration = this.viewportResumeNeedsCalibration || !!calibrate;
+        if (guarded) {
+            // Debounce the tail of the visualViewport/browser-toolbar resize
+            // burst, while keeping a firm initial guard after visibility resumes.
+            this.viewportResumeGuardUntil = Math.max(this.viewportResumeGuardUntil, Date.now() + 220);
+            this.scheduleDeferredViewportRefresh();
+        }
+        return true;
+    }
+
     scheduleViewportRefresh({calibrate = true} = {}) {
         if (typeof window === 'undefined')
+            return;
+        if (this.deferViewportRefreshForVisibility(calibrate))
             return;
 
         if (this.isPagedMode)
@@ -4268,6 +4386,8 @@ class Reader {
 
         this.viewportRefreshFrame = requestAnimationFrame(() => {
             this.viewportRefreshFrame = 0;
+            if (this.deferViewportRefreshForVisibility(calibrate))
+                return;
             this.updateScrollerViewport();
             this.$nextTick(() => this.flushPendingReaderAnchorJump());
         });
@@ -4376,6 +4496,8 @@ class Reader {
                 let retryViewportBuild = false;
                 try {
                     await this.waitForStablePagedStage();
+                    if (this.deferViewportRefreshForVisibility(true))
+                        return;
                     if (
                         !this.isPagedMode
                         || this.loading
@@ -4390,6 +4512,21 @@ class Reader {
                         this.pagedBuildNeedsRefresh = true;
                         return;
                     }
+
+                    // The viewport can return to its last committed geometry
+                    // while this job is waiting for the stage to settle (for
+                    // example after a quick tablet rotation there and back).
+                    // In that case the existing pages are already correct and
+                    // starting another full pagination pass would be redundant.
+                    const settledSignature = this.getPagedLayoutSignature();
+                    const settledCalibrationKey = this.getBottomClipCompensationGeometryKey();
+                    if (
+                        this.pagedPages.length
+                        && settledSignature
+                        && settledSignature === this.pagedLayoutSignature
+                        && settledCalibrationKey === this.pagedCommittedCalibrationKey
+                    )
+                        return;
 
                     const viewportBuildJobId = ++this.pagedBuildJobId;
                     const buildCommitted = await this.buildPagedPagesChunked(viewportBuildJobId);
@@ -4461,6 +4598,50 @@ class Reader {
             Math.round(Number(this.pageMinHeight || 0) || 0),
             Math.round(Number(this.currentDynamicBottomClipCompensation || 0) || 0),
         ].join('|');
+    }
+
+    getPagedLayoutCacheKey(layoutSignature = '', calibrationKey = '', geometrySignature = '') {
+        const layout = String(layoutSignature || '').trim();
+        const calibration = String(calibrationKey || '').trim();
+        const geometry = String(geometrySignature || '').trim();
+        if (!layout || !calibration || !geometry)
+            return '';
+        return `${layout}::${calibration}::${geometry}`;
+    }
+
+    takePagedLayoutCacheEntry(cacheKey = '') {
+        const key = String(cacheKey || '').trim();
+        if (!key || !this.pagedLayoutCache.has(key))
+            return null;
+
+        const entry = this.pagedLayoutCache.get(key) || null;
+        this.pagedLayoutCache.delete(key);
+        return entry;
+    }
+
+    storePagedLayoutCacheEntry(cacheKey = '', entry = null) {
+        const key = String(cacheKey || '').trim();
+        if (!key || !entry)
+            return;
+
+        this.pagedLayoutCache.delete(key);
+        this.pagedLayoutCache.set(key, entry);
+        while (this.pagedLayoutCache.size > this.pagedLayoutCacheLimit) {
+            let leastUsefulKey = '';
+            let leastUsefulScore = Infinity;
+            for (const [candidateKey, candidate] of this.pagedLayoutCache.entries()) {
+                const score = (candidate && candidate.type === 'complete')
+                    ? 100
+                    : Math.max(0, Number(candidate && candidate.buildProgressPercent) || 0);
+                if (score >= leastUsefulScore)
+                    continue;
+                leastUsefulKey = candidateKey;
+                leastUsefulScore = score;
+            }
+            if (!leastUsefulKey)
+                break;
+            this.pagedLayoutCache.delete(leastUsefulKey);
+        }
     }
 
     cancelCompactChromeBuildPendingClear() {
@@ -6142,13 +6323,13 @@ class Reader {
         });
     }
 
-    requestReaderSettingsReflow({previewSpacing = false} = {}) {
+    requestReaderSettingsReflow({previewSpacing = false, immediate = false} = {}) {
         if (!this.bookUid) {
             this.readerSettingsReflowPending = false;
             return;
         }
 
-        if (!this.controlsOpen) {
+        if (immediate || !this.controlsOpen) {
             this.reflowReaderLayout();
             return;
         }
@@ -7810,18 +7991,50 @@ class Reader {
             return false;
 
         this.syncBottomClipCompensationGeometry();
-        const queue = this.buildPagedUnits().slice();
-        const totalUnits = Math.max(1, queue.length || 1);
-        const pages = [];
-        let currentUnits = [];
-        let activeSectionId = '';
-        let currentPageSectionId = '';
-        let currentEstimatedLines = 0;
-        let buildProgressPercent = 1;
+        const buildOwnerJobId = jobId || this.pagedBuildJobId;
+        const buildCalibrationKey = this.getBottomClipCompensationGeometryKey();
+        const buildLayoutSignature = this.getPagedLayoutSignature();
+        const buildGeometrySignature = this.getPagedGeometrySignature();
+        const buildSourceKey = this.readerSourceKey;
+        const layoutCacheKey = this.getPagedLayoutCacheKey(
+            buildLayoutSignature,
+            buildCalibrationKey,
+            buildGeometrySignature,
+        );
+        const cachedLayout = this.takePagedLayoutCacheEntry(layoutCacheKey);
+        if (cachedLayout && cachedLayout.type === 'complete' && Array.isArray(cachedLayout.pages) && cachedLayout.pages.length) {
+            this.pagedPages = cachedLayout.pages;
+            this.currentPageIndex = Math.max(0, Math.min(this.pagedPages.length - 1, this.currentPageIndex));
+            this.pagedLayoutSignature = buildLayoutSignature;
+            this.pagedCommittedCalibrationKey = buildCalibrationKey;
+            this.pagedCommittedCalibrationGeneration = buildOwnerJobId;
+            this.pagedCommittedCalibrationAt = Date.now();
+            this.resetBottomClipCalibrationSample();
+            this.noteCompactChromeTotalPages();
+            this.rebuildSearchResults(false);
+            this.storePagedLayoutCacheEntry(layoutCacheKey, cachedLayout);
+            if (this.readerDebugEnabled) {
+                this.readerDebug = Object.assign({}, this.readerDebug, {
+                    paginationStats: Object.assign({}, cachedLayout.stats || {}, {status: 'cached'}),
+                });
+            }
+            return true;
+        }
+
+        const checkpoint = (cachedLayout && cachedLayout.type === 'partial') ? cachedLayout : null;
+        const queue = checkpoint ? checkpoint.queue : this.buildPagedUnits().slice();
+        const totalUnits = Math.max(1, (checkpoint && checkpoint.totalUnits) || queue.length || 1);
+        const pages = checkpoint ? checkpoint.pages : [];
+        let currentUnits = checkpoint ? checkpoint.currentUnits : [];
+        let activeSectionId = checkpoint ? checkpoint.activeSectionId : '';
+        let currentPageSectionId = checkpoint ? checkpoint.currentPageSectionId : '';
+        let currentEstimatedLines = checkpoint ? checkpoint.currentEstimatedLines : 0;
+        let buildProgressPercent = Math.max(1, (checkpoint && checkpoint.buildProgressPercent) || 1);
+        const startIndex = Math.max(0, Math.min(queue.length, (checkpoint && checkpoint.nextIndex) || 0));
         const fastLineBudget = this.getFastPagedLineBudget(measureHost);
         const buildStartedAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-        const fallbackRoots = new Map();
-        const stats = {
+        const fallbackRoots = new Map((checkpoint && checkpoint.fallbackRoots) || []);
+        const stats = Object.assign({
             status: 'building',
             totalUnits: queue.length,
             fastUnits: 0,
@@ -7833,7 +8046,7 @@ class Reader {
             pages: 0,
             durationMs: 0,
             fallbackRoots: [],
-        };
+        }, (checkpoint && checkpoint.stats) || {});
 
         const applyUnits = (list) => {
             measureHtml.innerHTML = this.wrapPagedMeasureHtml(list);
@@ -7883,28 +8096,45 @@ class Reader {
             this.loadingMessage = `${this.uiText.loadingPages} ${buildProgressPercent}%`;
             await this.waitForAnimationFrames(1);
         };
+        const storePartialLayout = (nextIndex = 0) => {
+            if (!layoutCacheKey || buildSourceKey !== this.readerSourceKey)
+                return;
+            this.storePagedLayoutCacheEntry(layoutCacheKey, {
+                type: 'partial',
+                queue,
+                totalUnits,
+                pages,
+                currentUnits,
+                activeSectionId,
+                currentPageSectionId,
+                currentEstimatedLines,
+                buildProgressPercent,
+                nextIndex: Math.max(0, Math.min(queue.length, nextIndex)),
+                fallbackRoots: Array.from(fallbackRoots.entries()),
+                stats: Object.assign({}, stats, {status: 'paused'}),
+            });
+        };
 
-        const buildOwnerJobId = jobId || this.pagedBuildJobId;
-        const buildCalibrationKey = this.getBottomClipCompensationGeometryKey();
-        const buildLayoutSignature = this.getPagedLayoutSignature();
-        const buildGeometrySignature = this.getPagedGeometrySignature();
         this.pagedBuildOwnerJobId = buildOwnerJobId;
         this.pagedBuildInProgress = true;
         this.pagedBuildNeedsRefresh = false;
         this.pagedBuildSignature = buildLayoutSignature;
         this.pagedBuildGeometrySignature = buildGeometrySignature;
         this.pagedBuildStage = 'building';
-        this.pagedBuildProgressPercent = 1;
+        this.pagedBuildProgressPercent = buildProgressPercent;
+        this.loadingMessage = `${this.uiText.loadingPages} ${buildProgressPercent}%`;
         if (this.readerDebugEnabled)
             publishStats('building');
         if (this.compactChromePagedBuildPending)
             this.touchCompactChromeBuildActivity();
 
         try {
-            applyUnits([]);
-            for (let index = 0; index < queue.length; index += 1) {
-                if (this.pagedBuildNeedsRefresh || (jobId && jobId !== this.pagedBuildJobId))
+            applyUnits(currentUnits);
+            for (let index = startIndex; index < queue.length; index += 1) {
+                if (this.pagedBuildNeedsRefresh || (jobId && jobId !== this.pagedBuildJobId)) {
+                    storePartialLayout(index);
                     return false;
+                }
 
                 const unit = queue[index];
                 if (unit.sectionId)
@@ -8041,8 +8271,10 @@ class Reader {
                 await maybeYield(index + 1);
             }
 
-            if (this.pagedBuildNeedsRefresh || (jobId && jobId !== this.pagedBuildJobId))
+            if (this.pagedBuildNeedsRefresh || (jobId && jobId !== this.pagedBuildJobId)) {
+                storePartialLayout(queue.length);
                 return false;
+            }
             finalizePage();
             let finalPages = (pages.length ? pages : [{
                 html: this.readerHtml || '',
@@ -8051,33 +8283,42 @@ class Reader {
             }]);
             if (this.isCompactLayout) {
                 finalPages = await this.compactMobilePagedPagesChunked(finalPages, measureHost, measureHtml, jobId);
-                if (!finalPages)
+                if (!finalPages) {
+                    storePartialLayout(queue.length);
                     return false;
+                }
             } else {
                 this.pagedBuildStage = 'finalizing';
                 this.pagedBuildProgressPercent = 98;
                 this.loadingMessage = `${this.uiText.loadingPagesFinalizing.replace('...', '')} 98%`;
                 await this.waitForAnimationFrames(1);
             }
-            if (jobId && jobId !== this.pagedBuildJobId)
+            if (jobId && jobId !== this.pagedBuildJobId) {
+                storePartialLayout(queue.length);
                 return false;
+            }
             this.pagedBuildStage = 'finalizing';
             this.pagedBuildProgressPercent = 99;
             this.loadingMessage = `${this.uiText.loadingPagesFinalizing.replace('...', '')} 99%`;
             await this.waitForAnimationFrames(1);
-            if (jobId && jobId !== this.pagedBuildJobId)
+            if (jobId && jobId !== this.pagedBuildJobId) {
+                storePartialLayout(queue.length);
                 return false;
+            }
             this.pagedBuildProgressPercent = 100;
             this.loadingMessage = `${this.uiText.loadingPagesFinalizing.replace('...', '')} 100%`;
             await this.waitForAnimationFrames(1);
-            if (jobId && jobId !== this.pagedBuildJobId)
+            if (jobId && jobId !== this.pagedBuildJobId) {
+                storePartialLayout(queue.length);
                 return false;
+            }
             if (
                 this.pagedBuildNeedsRefresh
                 || buildCalibrationKey !== this.getBottomClipCompensationGeometryKey()
                 || buildLayoutSignature !== this.getPagedLayoutSignature()
                 || buildGeometrySignature !== this.getPagedGeometrySignature()
             ) {
+                storePartialLayout(queue.length);
                 this.pagedBuildNeedsRefresh = true;
                 return false;
             }
@@ -8090,6 +8331,12 @@ class Reader {
             this.resetBottomClipCalibrationSample();
             this.noteCompactChromeTotalPages();
             this.rebuildSearchResults(false);
+            this.storePagedLayoutCacheEntry(layoutCacheKey, {
+                type: 'complete',
+                pages: finalPages,
+                buildProgressPercent: 100,
+                stats: Object.assign({}, stats, {status: 'done'}),
+            });
             if (this.readerDebugEnabled)
                 publishStats('done');
             return true;
@@ -8536,9 +8783,11 @@ class Reader {
         this.pagedBuildJobId += 1;
         this.pagedBuildNeedsRefresh = false;
         this.pagedLayoutSignature = '';
+        this.pagedLayoutCache.clear();
         this.progressPersistPendingAfterPagedBuild = false;
         this.compactChromePagedBuildPending = false;
         this.compactChromeAwaitingCalibration = false;
+        this.compactChromeTransitionId += 1;
         this.dynamicBottomClipCompensationCompact = 0;
         this.dynamicBottomClipCompensationRegular = 0;
         this.bottomClipCompensationGeometryKey = '';
@@ -10113,9 +10362,19 @@ class Reader {
 
         const next = _.cloneDeep(preferences);
         const version = Math.max(0, parseInt(next.readerPreferencesVersion, 10) || 0);
-        if (version < readerPreferencesVersion) {
+        if (version < 2) {
             next.textShadow = false;
             next.einkProfile = Object.assign({}, next.einkProfile || {}, {textShadow: false});
+        }
+        if (
+            version < 3
+            && next.contentWidthMode === 'fixed'
+            && (Number(next.contentWidth || 1040) || 1040) === 1040
+        ) {
+            // The previous desktop default constrained the whole two-page
+            // spread to 1040px. Migrate only that untouched default; custom
+            // fixed widths remain an explicit reader preference.
+            next.contentWidthMode = 'viewport';
         }
         next.readerPreferencesVersion = readerPreferencesVersion;
         return next;

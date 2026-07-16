@@ -254,6 +254,42 @@
                             </div>
                         </section>
 
+                        <section class="admin-dashboard-section admin-dashboard-section--wide">
+                            <div class="admin-dashboard-section-title">Качество рекомендаций</div>
+                            <div class="admin-dashboard-grid admin-dashboard-grid--runtime">
+                                <div class="admin-stat">
+                                    <div class="admin-stat-label">Показы</div>
+                                    <div class="admin-stat-value">{{ discoveryMetric('impression') }}</div>
+                                    <div class="admin-stat-hint">{{ adminDiscovery.profiles || 0 }} профилей с событиями</div>
+                                </div>
+                                <div class="admin-stat">
+                                    <div class="admin-stat-label">CTR открытий</div>
+                                    <div class="admin-stat-value">{{ discoveryRateText('ctr') }}</div>
+                                    <div class="admin-stat-hint">{{ discoveryMetric('open') }} открытий</div>
+                                </div>
+                                <div class="admin-stat">
+                                    <div class="admin-stat-label">Начали читать</div>
+                                    <div class="admin-stat-value">{{ discoveryRateText('start') }}</div>
+                                    <div class="admin-stat-hint">{{ discoveryMetric('start') }} стартов</div>
+                                </div>
+                                <div class="admin-stat">
+                                    <div class="admin-stat-label">Сохранили</div>
+                                    <div class="admin-stat-value">{{ discoveryRateText('save') }}</div>
+                                    <div class="admin-stat-hint">{{ discoveryMetric('save') }} сохранений</div>
+                                </div>
+                                <div class="admin-stat">
+                                    <div class="admin-stat-label">Негативные реакции</div>
+                                    <div class="admin-stat-value">{{ discoveryRateText('negativeFeedback') }}</div>
+                                    <div class="admin-stat-hint">{{ discoveryMetric('feedback') }} реакций всего</div>
+                                </div>
+                                <div class="admin-stat">
+                                    <div class="admin-stat-label">Настроили вкусы</div>
+                                    <div class="admin-stat-value">{{ adminDiscovery.configuredProfiles || 0 }}</div>
+                                    <div class="admin-stat-hint">Жанры, авторы или языки</div>
+                                </div>
+                            </div>
+                        </section>
+
                         <section class="admin-dashboard-section">
                             <div class="admin-dashboard-section-title">Хранилище</div>
                             <div class="admin-dashboard-grid admin-dashboard-grid--storage">
@@ -1358,6 +1394,19 @@ class SettingsDialog {
 
     get adminRuntime() {
         return (this.adminDashboard && this.adminDashboard.runtime) || {};
+    }
+
+    get adminDiscovery() {
+        return (this.adminDashboard && this.adminDashboard.discovery) || {};
+    }
+
+    discoveryMetric(key = '') {
+        return Number((this.adminDiscovery.totals || {})[key]) || 0;
+    }
+
+    discoveryRateText(key = '') {
+        const rate = Number((this.adminDiscovery.rates || {})[key]) || 0;
+        return `${(rate * 100).toFixed(rate >= 0.1 ? 0 : 1)}%`;
     }
 
     get adminRuntimeHint() {

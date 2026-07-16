@@ -410,6 +410,10 @@ class Api {
         return await this.request({action: 'update-discovery-preferences', preferences}, 120);
     }
 
+    async recordDiscoveryEvents(events = []) {
+        return await this.request({action: 'record-discovery-events', events}, 120);
+    }
+
     async updateSharedDiscoveryConfig(discovery = {}) {
         return await this.request({action: 'update-shared-discovery-config', discovery}, 120);
     }

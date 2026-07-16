@@ -47,6 +47,18 @@
                 {{ unreadOnly ? 'Показывать все' : 'Только непрочитанное' }}
             </q-btn>
 
+            <q-btn
+                v-if="personalMode"
+                unelevated
+                no-caps
+                class="discovery-toolbar-btn"
+                :class="{'discovery-toolbar-btn--active': tasteSetupOpen}"
+                icon="la la-sliders-h"
+                @click.stop.prevent="toggleTasteSetup"
+            >
+                Настроить вкусы
+            </q-btn>
+
             <q-select
                 v-if="showExternalFilter && externalGenreOptions && externalGenreOptions.length > 1"
                 :model-value="externalGenreUrl"
@@ -79,6 +91,108 @@
 
             </div>
         </div>
+
+        <section v-if="showTasteSetup" class="discovery-taste-panel">
+            <div class="discovery-taste-copy">
+                <div class="discovery-taste-title">Что вам нравится читать?</div>
+                <div class="discovery-taste-subtitle">
+                    Выберите жанры, авторов и языки — это уточнит рекомендации даже для давно используемого профиля. Настройки можно изменить в любой момент.
+                </div>
+            </div>
+            <div class="discovery-taste-grid">
+                <q-select
+                    v-model="tasteGenres"
+                    class="taste-genre-select"
+                    outlined
+                    dense
+                    multiple
+                    use-chips
+                    use-input
+                    clearable
+                    counter
+                    emit-value
+                    map-options
+                    options-dense
+                    max-values="20"
+                    input-debounce="0"
+                    popup-content-style="height: min(420px, 58vh); min-height: min(420px, 58vh); max-height: min(420px, 58vh); overflow-y: auto"
+                    :options="visibleTasteGenreOptions"
+                    label="Любимые жанры"
+                    hint="Введите часть названия жанра"
+                    @clear="tasteGenres = []"
+                    @filter="filterTasteGenres"
+                >
+                    <template #no-option>
+                        <q-item>
+                            <q-item-section class="text-grey-7">
+                                Жанры не найдены
+                            </q-item-section>
+                        </q-item>
+                    </template>
+                </q-select>
+                <q-select
+                    v-model="tasteAuthors"
+                    outlined
+                    dense
+                    multiple
+                    use-chips
+                    use-input
+                    clearable
+                    counter
+                    options-dense
+                    new-value-mode="add-unique"
+                    max-values="40"
+                    input-debounce="250"
+                    popup-content-style="height: min(320px, 46vh); min-height: min(320px, 46vh); max-height: min(320px, 46vh); overflow-y: auto"
+                    :options="tasteAuthorOptions"
+                    :loading="tasteAuthorsLoading"
+                    label="Любимые авторы"
+                    hint="Начните вводить фамилию или имя"
+                    @clear="tasteAuthors = []"
+                    @filter="filterTasteAuthors"
+                    @filter-abort="abortTasteAuthorFilter"
+                >
+                    <template #no-option>
+                        <q-item>
+                            <q-item-section class="text-grey-7">
+                                {{ tasteAuthorNoOptionsLabel }}
+                            </q-item-section>
+                        </q-item>
+                    </template>
+                </q-select>
+                <q-select
+                    v-model="tasteLanguages"
+                    outlined
+                    dense
+                    multiple
+                    use-chips
+                    emit-value
+                    map-options
+                    :options="tasteLanguageOptions"
+                    label="Языки книг"
+                />
+                <q-select
+                    v-model="tasteExplorationRatio"
+                    outlined
+                    dense
+                    emit-value
+                    map-options
+                    :options="tasteExplorationOptions"
+                    label="Сколько нового пробовать"
+                />
+            </div>
+            <div class="discovery-taste-actions">
+                <q-btn color="primary" unelevated no-caps icon="la la-check" @click.stop.prevent="saveTaste">
+                    Сохранить вкусы
+                </q-btn>
+                <q-btn v-if="personalTasteNeedsSetup" flat no-caps @click.stop.prevent="dismissTasteSetup">
+                    Не сейчас
+                </q-btn>
+                <q-btn v-else flat no-caps @click.stop.prevent="tasteSetupOpen = false">
+                    Закрыть
+                </q-btn>
+            </div>
+        </section>
 
         <div v-if="loading" class="discovery-loading-line">
             <q-icon class="la la-spinner icon-rotate" size="20px" />
@@ -188,6 +302,7 @@ class DiscoveryShelves extends BaseList {
         sectionTitle: String,
         compactMode: Boolean,
         personalMode: Boolean,
+        profileKey: String,
         externalFilter: { type: String, default: 'books'},
         externalGenreOptions: { type: Array, default: () => []},
         externalGenreUrl: { type: String, default: ''},
@@ -204,10 +319,221 @@ class DiscoveryShelves extends BaseList {
         errorMessage: String,
     };
 
+    tasteSetupOpen = false;
+    tasteHandledProfileKey = null;
+    tasteGenres = [];
+    tasteGenreFilteredOptions = null;
+    tasteAuthors = [];
+    tasteAuthorOptions = [];
+    tasteAuthorQuery = '';
+    tasteAuthorSearchSeq = 0;
+    tasteAuthorsLoading = false;
+    tasteAuthorSearchFailed = false;
+    tasteLanguages = [];
+    tasteExplorationRatio = 0.15;
+
     refresh() {
     }
 
+    get personalTasteShelf() {
+        return (Array.isArray(this.shelves) ? this.shelves : [])
+            .find(shelf => shelf && String(shelf.id || '') === 'similar-books') || {};
+    }
+
+    get personalTaste() {
+        return (this.personalTasteShelf.discoveryTaste && typeof(this.personalTasteShelf.discoveryTaste) === 'object'
+            ? this.personalTasteShelf.discoveryTaste
+            : {});
+    }
+
+    get personalTasteNeedsSetup() {
+        const profileKey = String(this.profileKey || '');
+        return this.personalTasteShelf.discoveryNeedsTasteSetup === true
+            && this.tasteHandledProfileKey !== profileKey;
+    }
+
+    get showTasteSetup() {
+        return !!(this.personalMode && (this.tasteSetupOpen || this.personalTasteNeedsSetup));
+    }
+
+    get tasteGenreOptions() {
+        const entries = (this.genreMap instanceof Map ? Array.from(this.genreMap.entries()) : Object.entries(this.genreMap || {}));
+        return entries
+            .map(([value, label]) => ({value: String(value || '').trim(), label: String(label || value || '').trim()}))
+            .filter(item => item.value && item.label && !/^\?+$/.test(item.label))
+            .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
+    }
+
+    get visibleTasteGenreOptions() {
+        return (Array.isArray(this.tasteGenreFilteredOptions)
+            ? this.tasteGenreFilteredOptions
+            : this.tasteGenreOptions);
+    }
+
+    get tasteLanguageOptions() {
+        return [
+            {label: 'Русский', value: 'ru'},
+            {label: 'Английский', value: 'en'},
+            {label: 'Украинский', value: 'uk'},
+            {label: 'Немецкий', value: 'de'},
+            {label: 'Французский', value: 'fr'},
+            {label: 'Испанский', value: 'es'},
+            {label: 'Итальянский', value: 'it'},
+        ];
+    }
+
+    get tasteAuthorNoOptionsLabel() {
+        if (this.tasteAuthorsLoading)
+            return 'Ищу авторов...';
+        if (this.tasteAuthorSearchFailed)
+            return 'Не удалось выполнить поиск';
+        if (this.tasteAuthorQuery.length < 2)
+            return 'Введите не менее двух букв';
+        return 'Авторы не найдены';
+    }
+
+    get tasteExplorationOptions() {
+        return [
+            {label: 'Осторожно · 10%', value: 0.1},
+            {label: 'Сбалансированно · 15%', value: 0.15},
+            {label: 'Больше нового · 25%', value: 0.25},
+        ];
+    }
+
+    syncTasteEditor() {
+        const taste = this.personalTaste;
+        const allowedGenres = new Set(this.tasteGenreOptions.map(item => item.value));
+        const savedGenres = Array.isArray(taste.genres) ? taste.genres.slice() : [];
+        this.tasteGenres = (allowedGenres.size
+            ? savedGenres.filter(genre => allowedGenres.has(genre))
+            : savedGenres);
+        this.tasteAuthors = this.normalizeTasteAuthors(taste.authors);
+        this.tasteAuthorOptions = this.tasteAuthors.slice();
+        this.tasteAuthorQuery = '';
+        this.tasteAuthorSearchFailed = false;
+        this.tasteLanguages = Array.isArray(taste.languages) ? taste.languages.slice() : [];
+        this.tasteExplorationRatio = Number(taste.explorationRatio) || 0.15;
+    }
+
+    toggleTasteSetup() {
+        this.tasteSetupOpen = !this.tasteSetupOpen;
+        if (this.tasteSetupOpen)
+            this.syncTasteEditor();
+    }
+
+    filterTasteGenres(value, update) {
+        const normalize = input => String(input || '')
+            .toLocaleLowerCase('ru-RU')
+            .replace(/ё/g, 'е')
+            .replace(/\s+/g, ' ')
+            .trim();
+        const terms = normalize(value).split(' ').filter(Boolean);
+        update(() => {
+            this.tasteGenreFilteredOptions = (!terms.length
+                ? this.tasteGenreOptions
+                : this.tasteGenreOptions.filter((item) => {
+                    const searchable = normalize(`${item.label} ${item.value}`);
+                    return terms.every(term => searchable.includes(term));
+                }));
+        });
+    }
+
+    normalizeTasteAuthors(values, limit = 40) {
+        const result = [];
+        const seen = new Set();
+        for (const value of (Array.isArray(values) ? values : [])) {
+            const authors = String(value || '').split(/[,;\n]/);
+            for (const author of authors) {
+                const normalized = author.replace(/\s+/g, ' ').trim();
+                const key = normalized.toLocaleLowerCase('ru-RU').replace(/ё/g, 'е');
+                if (normalized && !seen.has(key)) {
+                    seen.add(key);
+                    result.push(normalized);
+                }
+            }
+        }
+        return result.slice(0, Math.max(0, Number(limit) || 40));
+    }
+
+    async filterTasteAuthors(value, update) {
+        const query = String(value || '').replace(/\s+/g, ' ').trim();
+        const requestSeq = ++this.tasteAuthorSearchSeq;
+        this.tasteAuthorQuery = query;
+        this.tasteAuthorSearchFailed = false;
+
+        if (query.length < 2) {
+            this.tasteAuthorsLoading = false;
+            update(() => {
+                this.tasteAuthorOptions = this.tasteAuthors.slice();
+            });
+            return;
+        }
+
+        this.tasteAuthorsLoading = true;
+        try {
+            const response = await this.api.search('author', {
+                author: query,
+                del: '0',
+                limit: 30,
+                offset: 0,
+            });
+            if (requestSeq !== this.tasteAuthorSearchSeq)
+                return;
+
+            update(() => {
+                const found = (response && Array.isArray(response.found) ? response.found : [])
+                    .map(item => String(item.author || '').replace(/\s+/g, ' ').trim())
+                    .filter(Boolean);
+                this.tasteAuthorOptions = this.normalizeTasteAuthors(this.tasteAuthors.concat(found), 70);
+                this.tasteAuthorsLoading = false;
+            });
+        } catch (e) {
+            if (requestSeq !== this.tasteAuthorSearchSeq)
+                return;
+            update(() => {
+                this.tasteAuthorOptions = [];
+                this.tasteAuthorsLoading = false;
+                this.tasteAuthorSearchFailed = true;
+            });
+        }
+    }
+
+    abortTasteAuthorFilter() {
+        this.tasteAuthorSearchSeq++;
+        this.tasteAuthorsLoading = false;
+    }
+
+    saveTaste() {
+        const allowedGenres = new Set(this.tasteGenreOptions.map(item => item.value));
+        const authors = this.normalizeTasteAuthors(this.tasteAuthors);
+        this.$emit('save-taste', {
+            genres: (Array.isArray(this.tasteGenres)
+                ? this.tasteGenres.filter(genre => allowedGenres.has(genre))
+                : []),
+            authors,
+            languages: this.tasteLanguages,
+            explorationRatio: this.tasteExplorationRatio,
+            completedAt: new Date().toISOString(),
+        });
+        this.tasteHandledProfileKey = String(this.profileKey || '');
+        this.tasteSetupOpen = false;
+    }
+
+    dismissTasteSetup() {
+        this.$emit('dismiss-taste');
+        this.tasteHandledProfileKey = String(this.profileKey || '');
+        this.tasteSetupOpen = false;
+    }
+
     bookEvent(event) {
+        if (event && event.action === 'discoveryFeedback') {
+            this.$emit('feedback-book', {
+                book: event.book,
+                kind: event.format || 'not_interested',
+            });
+            return;
+        }
+
         if (event && event.action === 'discoveryDismiss') {
             this.$emit('dismiss-book', event.book);
             return;
@@ -216,6 +542,19 @@ class DiscoveryShelves extends BaseList {
         if (event && event.action === 'discoveryRestore') {
             this.$emit('restore-book', event.book);
             return;
+        }
+
+        const interactionTypes = {
+            bookInfo: 'open',
+            readBook: 'start',
+            readingList: 'save',
+            download: 'download',
+        };
+        if (event && interactionTypes[event.action] && event.book && event.book.discoveryShelfId) {
+            this.$emit('discovery-interaction', {
+                book: event.book,
+                type: interactionTypes[event.action],
+            });
         }
 
         super.bookEvent(event);
@@ -386,6 +725,41 @@ export default vueComponent(DiscoveryShelves);
     font-weight: 600;
 }
 
+.discovery-taste-panel {
+    margin-bottom: 22px;
+    padding: 18px;
+    border: 1px solid color-mix(in srgb, var(--app-primary) 28%, var(--app-border) 72%);
+    border-radius: 20px;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--app-surface) 88%, var(--app-primary) 12%), var(--app-surface));
+}
+
+.discovery-taste-title {
+    color: var(--app-text);
+    font-size: 18px;
+    font-weight: 800;
+}
+
+.discovery-taste-subtitle {
+    margin-top: 4px;
+    color: var(--app-muted);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.discovery-taste-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.discovery-taste-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+}
+
 .discovery-loading-line {
     display: inline-flex;
     align-items: center;
@@ -546,6 +920,10 @@ export default vueComponent(DiscoveryShelves);
 
     .discovery-title {
         font-size: 22px;
+    }
+
+    .discovery-taste-grid {
+        grid-template-columns: 1fr;
     }
 
     .discovery-grid {

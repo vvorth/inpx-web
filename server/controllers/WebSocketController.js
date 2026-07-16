@@ -123,6 +123,8 @@ class WebSocketController {
                     await this.getDiscoveryShelves(req, ws); break;
                 case 'update-discovery-preferences':
                     await this.updateDiscoveryPreferences(req, ws); break;
+                case 'record-discovery-events':
+                    await this.recordDiscoveryEvents(req, ws); break;
                 case 'update-shared-discovery-config':
                     await this.updateSharedDiscoveryConfig(req, ws); break;
                 case 'update-admin-integrations':
@@ -269,6 +271,7 @@ class WebSocketController {
             'update-user-profile',
             'delete-user-profile',
             'update-discovery-preferences',
+            'record-discovery-events',
             'update-shared-discovery-config',
             'update-admin-integrations',
             'update-admin-opds',
@@ -480,6 +483,16 @@ class WebSocketController {
             req.userId,
             req.profileAccessToken,
             req.preferences || {},
+        );
+
+        this.send(result, req, ws);
+    }
+
+    async recordDiscoveryEvents(req, ws) {
+        const result = await this.webWorker.recordDiscoveryEvents(
+            req.userId,
+            req.profileAccessToken,
+            req.events || [],
         );
 
         this.send(result, req, ws);

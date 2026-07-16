@@ -721,9 +721,9 @@ export default vueComponent(ReadingListsDialog);
 }
 
 .list-book-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto 32px;
     align-items: center;
-    justify-content: space-between;
     gap: 10px;
     padding: 10px 12px;
     border-radius: 12px;
