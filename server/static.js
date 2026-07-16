@@ -649,15 +649,16 @@ module.exports = (app, config, webWorker = null) => {
                                 await generateZip(bookFile, rawFile, downFileName);
                             downFileName += '.zip';
                         } else if (bookConverter.canConvertTo(fileType)) {
-                            bookFile += `.${bookConverter.getConvertedExtension(fileType)}`;
-                            downFileName = await bookConverter.prepareConvertedFile({
+                            const prepared = await bookConverter.prepareConvertedFile({
                                 inputFile: rawFile,
-                                outputFile: bookFile,
+                                cacheBasePath: bookFile,
                                 format: fileType,
                                 sourceFileName: downFileName,
                                 downFileName,
                                 config,
                             });
+                            bookFile = prepared.filePath;
+                            downFileName = prepared.downloadName;
                         } else {
                             throw new Error(`Unsupported file type: ${fileType}`);
                         }

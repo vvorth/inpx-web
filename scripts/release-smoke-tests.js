@@ -92,6 +92,132 @@ function testConvertedBookFileNames() {
     assert.strictEqual(bookConverter.getConvertedFileName('Book.fb2', 'epub3'), 'Book.epub');
 }
 
+async function testFb2cngConfigAndConversionCache() {
+    const baseConfigPath = require.resolve('../server/config/base');
+    const ConfigManager = require('../server/config');
+    const bookConverter = require('../server/core/BookConverter');
+    const envNames = ['INPX_FB2CNG_CONFIG', 'FB2CNG_CONFIG'];
+    const previousEnv = Object.fromEntries(envNames.map(name => [name, process.env[name]]));
+
+    try {
+        process.env.INPX_FB2CNG_CONFIG = '/config/inpx.yaml';
+        process.env.FB2CNG_CONFIG = '/config/legacy.yaml';
+        delete require.cache[baseConfigPath];
+        assert.strictEqual(require('../server/config/base').fb2cngConfigPath, '/config/inpx.yaml');
+
+        delete process.env.INPX_FB2CNG_CONFIG;
+        delete require.cache[baseConfigPath];
+        assert.strictEqual(require('../server/config/base').fb2cngConfigPath, '/config/legacy.yaml');
+    } finally {
+        for (const name of envNames) {
+            if (previousEnv[name] === undefined)
+                delete process.env[name];
+            else
+                process.env[name] = previousEnv[name];
+        }
+        delete require.cache[baseConfigPath];
+        require('../server/config/base');
+    }
+
+    assert.ok(!ConfigManager.propsToSave.includes('fb2cngConfigPath'));
+    assert.strictEqual(typeof(bookConverter.convert), 'function');
+    assert.strictEqual(typeof(bookConverter.prepareConvertedFile), 'function');
+
+    await withTempDir(async(dir) => {
+        const configPath = path.join(dir, 'fb2cng', 'config.yaml');
+        const cacheBasePath = path.join(dir, 'cache', 'book-hash');
+        await fs.outputFile(configPath, 'document:\n  title: first\n');
+
+        const config = {
+            conversionEnabled: true,
+            converterPaths: {fb2cng: '/opt/tools/fbc-custom'},
+            fb2cngConfigPath: configPath,
+            fb2cngVersion: 'v1.2.3',
+        };
+        const common = {
+            cacheBasePath,
+            inputFile: path.join(dir, 'book.raw'),
+            sourceFileName: 'Book.fb2',
+            config,
+        };
+        const epub = await bookConverter.getConversionCacheInfo({...common, format: 'epub'});
+        const epub3 = await bookConverter.getConversionCacheInfo({...common, format: 'epub3'});
+        assert.notStrictEqual(epub.filePath, epub3.filePath);
+        assert.match(epub.filePath, /\.converted-v2-epub-/);
+        assert.match(epub3.filePath, /\.converted-v2-epub3-/);
+
+        const otherVersion = await bookConverter.getConversionCacheInfo({
+            ...common,
+            format: 'epub',
+            config: {...config, fb2cngVersion: 'v1.2.4'},
+        });
+        assert.notStrictEqual(epub.filePath, otherVersion.filePath);
+
+        await fs.writeFile(configPath, 'document:\n  title: second\n');
+        const changedConfig = await bookConverter.getConversionCacheInfo({...common, format: 'epub'});
+        assert.notStrictEqual(epub.filePath, changedConfig.filePath);
+
+        let validationCall = null;
+        await bookConverter.validateFb2cngConfig(
+            changedConfig.fb2cngConfig,
+            config.converterPaths,
+            async(commands, args) => {
+                validationCall = {commands, args};
+            },
+        );
+        assert.strictEqual(validationCall.commands[0], '/opt/tools/fbc-custom');
+        assert.deepStrictEqual(validationCall.args, ['--config', path.resolve(configPath), 'dumpconfig']);
+
+        await fs.writeFile(configPath, 'invalid: [yaml\n');
+        const invalidConfig = await bookConverter.readFb2cngConfig(configPath);
+        await assert.rejects(
+            () => bookConverter.validateFb2cngConfig(
+                invalidConfig,
+                config.converterPaths,
+                async() => { throw new Error('YAML parse error'); },
+            ),
+            /Invalid fb2cng config.+YAML parse error/,
+        );
+
+        await assert.rejects(
+            () => bookConverter.getConversionCacheInfo({
+                ...common,
+                format: 'epub',
+                config: {...config, fb2cngConfigPath: path.join(dir, 'missing.yaml')},
+            }),
+            /Invalid fb2cng config.+does not exist or is not readable/,
+        );
+
+        const noCustomConfig = {...config, fb2cngConfigPath: ''};
+        const cached = await bookConverter.getConversionCacheInfo({
+            ...common,
+            format: 'epub',
+            config: noCustomConfig,
+        });
+        await fs.outputFile(cached.filePath, 'cached conversion');
+        const prepared = await bookConverter.prepareConvertedFile({
+            inputFile: common.inputFile,
+            cacheBasePath,
+            format: 'epub',
+            sourceFileName: common.sourceFileName,
+            downFileName: common.sourceFileName,
+            config: noCustomConfig,
+        });
+        assert.deepStrictEqual(prepared, {
+            filePath: cached.filePath,
+            downloadName: 'Book.epub',
+            created: false,
+        });
+    });
+
+    const staticSource = await fs.readFile(path.join(__dirname, '../server/static.js'), 'utf8');
+    const workerSource = await fs.readFile(path.join(__dirname, '../server/core/WebWorker.js'), 'utf8');
+    assert.match(staticSource, /cacheBasePath: bookFile/);
+    assert.match(workerSource, /cacheBasePath: gzipFile/);
+    assert.match(workerSource, /Неподдерживаемый формат отправки/);
+    assert.match(workerSource, /Конвертация книг отключена в текущем образе/);
+}
+
 function request(server, urlPath) {
     const port = server.address().port;
     return new Promise((resolve, reject) => {
@@ -1429,6 +1555,7 @@ const tests = [
     testReaderHomeFieldsIgnoreGlobalDarkTheme,
     testReaderImageDataUrlsAreValidated,
     testConvertedBookFileNames,
+    testFb2cngConfigAndConversionCache,
     testAdminSettingsRestoreKeepsSecrets,
     testAdminBackupArchiveAndDownload,
     testUserBackupExportsAndRestoresReaderState,

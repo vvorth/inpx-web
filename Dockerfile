@@ -136,12 +136,15 @@ ENTRYPOINT ["tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 
 FROM runtime-base AS runtime
 
+ARG FB2CNG_VERSION
+
 LABEL org.opencontainers.image.title="inpx-web" \
       org.opencontainers.image.description="Dockerized inpx-web fork with fb2cng and MuPDF conversion" \
       org.opencontainers.image.source="https://github.com/AceAsket/inpx-web"
 
 ENV INPX_ENABLE_CONVERSION=true
 ENV INPX_CONVERSION_FORMATS=epub,epub3,kepub,kfx,azw8,pdf
+ENV INPX_FB2CNG_VERSION=${FB2CNG_VERSION}
 
 COPY --from=fb2cng-tools /fb2cng-runtime/fbc /usr/local/bin/fbc
 

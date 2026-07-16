@@ -5680,19 +5680,19 @@ class WebWorker {
         const sourceFormat = String(rows[0].ext || '').toLowerCase();
 
         if (targetFormat && targetFormat !== sourceFormat) {
-            preparedFile = `${gzipFile}.${targetFormat}`;
-            const alreadyCached = await fs.pathExists(preparedFile);
-
-            preparedFileName = await bookConverter.prepareConvertedFile({
+            const prepared = await bookConverter.prepareConvertedFile({
                 inputFile: rawFile,
-                outputFile: preparedFile,
+                cacheBasePath: gzipFile,
                 format: targetFormat,
                 sourceFileName: downFileName,
                 downFileName,
                 config: this.config,
+                unsupportedMessage: `Неподдерживаемый формат отправки: ${targetFormat}`,
+                disabledMessage: 'Конвертация книг отключена в текущем образе.',
             });
-
-            if (!alreadyCached)
+            preparedFile = prepared.filePath;
+            preparedFileName = prepared.downloadName;
+            if (prepared.created)
                 cacheChanged = true;
             await utils.touchFile(preparedFile);
         }

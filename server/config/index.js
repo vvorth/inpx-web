@@ -52,7 +52,6 @@ const propsToSave = [
     'lowMemoryMode',
     'fullOptimization',
     'converterPaths',
-    'fb2cngConfigPath',
     'allowRemoteLib',
     'remoteLib',
     'server',
@@ -256,5 +255,7 @@ class ConfigManager {
         await fs.writeFile(this._config.configFile, JSON.stringify(dataToSave, null, 4));
     }
 }
+
+ConfigManager.propsToSave = propsToSave;
 
 module.exports = ConfigManager;
