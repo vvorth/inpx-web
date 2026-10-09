@@ -272,6 +272,18 @@ async function testStoreReadErrorKeepsData() {
     });
 }
 
-module.exports = [testBookRouteRejectsTraversal, testStoreReadErrorKeepsData, testAdminGetsRandomPasswordByDefault, testConcurrentSecretKeyCreation, testConcurrentStoreMutations, testAtomicConfigSave,
+async function testStoreLoadCacheStaysCurrent() {
+    await temporary(async(dataDir) => {
+        const [first, second] = [new ReadingListStore({dataDir, adminPassword: 'fixture'}), new ReadingListStore({dataDir, adminPassword: 'fixture'})];
+        await first.load();
+        const copy = await first.load();
+        copy.lists.push({id: 'leaked'});
+        assert.strictEqual((await first.load()).lists.length, 0, 'Mutating a loaded copy must not reach the cache');
+        await second.createList('default', 'From another instance');
+        assert.deepStrictEqual((await first.load()).lists.map(list => list.name), ['From another instance']);
+    });
+}
+
+module.exports = [testBookRouteRejectsTraversal, testStoreLoadCacheStaysCurrent, testStoreReadErrorKeepsData, testAdminGetsRandomPasswordByDefault, testConcurrentSecretKeyCreation, testConcurrentStoreMutations, testAtomicConfigSave,
     testSessionLifetimeAndMalformedCookies, testProfileCredentialChangesRevokeSessions,
     testDownloaderClosesFailedTransfers, testDownloaderVerifiesTlsCertificates];
