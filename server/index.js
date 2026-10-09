@@ -81,7 +81,7 @@ Options:
   --inpx=<filepath>    Set INPX collection file, default: the one that found in library dir
   --library-sources=<json> Set multiple INPX sources, JSON array or "name|inpx|libDir;..."
   --admin-login=<str>  Set admin profile login, default: ${defaultConfig.adminLogin}
-  --admin-password=<str> Set admin profile password, default: ${defaultConfig.adminPassword}
+  --admin-password=<str> Set admin profile password, default: random, printed to the log on first start
   --reset-admin-password Force reset of admin login/password on start
   --recreate           Force recreation of the search database on start
   --unsafe-filter      Use filter config at your own risk
@@ -250,6 +250,8 @@ async function main() {
 
     const { WebSocketController } = require('./controllers');
     const webSocketController = new WebSocketController(wss, webAccess, config, security);
+    await webSocketController.webWorker.readingListStore.warnIfDefaultAdminPassword()
+        .catch(e => log(LM_WARN, `Cannot check the admin password: ${e.message}`));
 
     require('./core/AudiobookshelfProvider').init(app, config, webSocketController.webWorker, security);
 

@@ -245,6 +245,17 @@ async function testBookRouteRejectsTraversal() {
     });
 }
 
-module.exports = [testBookRouteRejectsTraversal, testConcurrentSecretKeyCreation, testConcurrentStoreMutations, testAtomicConfigSave,
+async function testAdminGetsRandomPasswordByDefault() {
+    await temporary(async(dataDir) => {
+        const config = {dataDir, adminLogin: 'admin', adminPassword: ''};
+        const store = new ReadingListStore(config);
+        const admin = (await store.load()).users.find(user => user.isAdmin);
+        assert.ok(config.adminPassword.length >= 16, 'A random password must be generated');
+        assert.ok(await store.verifyUserPassword(admin.id, config.adminPassword));
+        assert.strictEqual(await store.verifyUserPassword(admin.id, 'admin'), false);
+    });
+}
+
+module.exports = [testBookRouteRejectsTraversal, testAdminGetsRandomPasswordByDefault, testConcurrentSecretKeyCreation, testConcurrentStoreMutations, testAtomicConfigSave,
     testSessionLifetimeAndMalformedCookies, testProfileCredentialChangesRevokeSessions,
     testDownloaderClosesFailedTransfers, testDownloaderVerifiesTlsCertificates];

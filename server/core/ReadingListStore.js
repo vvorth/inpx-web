@@ -6,6 +6,14 @@ const {withFileTransaction, writeFileAtomic} = require('./FilePersistence');
 
 const readerPreferencesVersion = 2;
 
+function logWarning(message) {
+    try {
+        new (require('./AppLogger'))().log(LM_WARN, message);
+    } catch (e) {
+        console.warn(message);
+    }
+}
+
 class ReadingListStore {
     constructor(config) {
         this.config = config;
@@ -77,8 +85,22 @@ class ReadingListStore {
         return this.validateLogin(this.config.adminLogin || 'admin');
     }
 
+    // Without a configured password the admin gets a random one, printed once to the log:
+    // a fixed default would let anyone who reaches the server in as admin.
     adminPassword() {
-        return String(this.config.adminPassword || 'admin');
+        if (!this.config.adminPassword) {
+            this.config.adminPassword = crypto.randomBytes(12).toString('base64url');
+            logWarning(`Admin profile "${this.adminLogin()}" password: ${this.config.adminPassword} `
+                + '(generated; set INPX_ADMIN_PASSWORD or --admin-password to choose one)');
+        }
+        return String(this.config.adminPassword);
+    }
+
+    // Installs made before the random default still have admin/admin.
+    async warnIfDefaultAdminPassword() {
+        const admin = (await this.load()).users.find(item => item.isAdmin);
+        if (admin && admin.passwordHash && await profilePassword.verify(admin.passwordHash, admin.login, 'admin'))
+            logWarning(`Admin profile "${admin.login}" still uses the password "admin": change it in the profile settings`);
     }
 
     makeAdminUser() {
