@@ -216,6 +216,10 @@ async function main() {
 
     //server
     const app = express();
+    // First, so every request is logged, not only unmatched ones.
+    // The development build has its own request logger.
+    if (config.logQueries && branch !== 'development')
+        logQueries(app);
     const security = new (require('./core/Security'))(config);
     await security.init();
     if (config.trustProxy)
@@ -260,10 +264,6 @@ async function main() {
 
     const initStatic = require('./static');
     initStatic(app, config, webSocketController.webWorker, security);
-
-    if (config.logQueries) {
-        logQueries(app);
-    }
 
     if (devModule) {
         devModule.logErrors(app);
