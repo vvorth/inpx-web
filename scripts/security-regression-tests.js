@@ -221,6 +221,30 @@ async function testDownloaderVerifiesTlsCertificates() {
     }
 }
 
-module.exports = [testConcurrentSecretKeyCreation, testConcurrentStoreMutations, testAtomicConfigSave,
+async function testBookRouteRejectsTraversal() {
+    await temporary(async(dir) => {
+        const config = {dataDir: path.join(dir, 'data'), rootPathStatic: '', bookPathStatic: '/book',
+            publicDir: path.join(dir, 'data', 'public'), bookDir: path.join(dir, 'data', 'public-files', 'book')};
+        await fs.ensureDir(config.bookDir);
+        await fs.outputFile(path.join(config.dataDir, 'reading-lists.json'), '{}');
+        const app = require('express')();
+        require('../server/static')(app, config);
+        const server = http.createServer(app);
+        await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+        try {
+            // Raw paths: fetch() would normalize the encoded dots away.
+            for (const url of ['/book/%2E%2E', '/book/..%2F..', '/book/..%2F..%2Fraw', '/book/..%2F../zip']) {
+                await new Promise((resolve, reject) => http.get({host: '127.0.0.1', port: server.address().port, path: url},
+                    res => res.resume().on('end', resolve)).on('error', reject));
+            }
+            assert.ok(await fs.pathExists(path.join(config.dataDir, 'reading-lists.json')), 'Data dir must survive');
+            assert.ok(await fs.pathExists(config.bookDir), 'Book cache must survive');
+        } finally {
+            await new Promise(resolve => server.close(resolve));
+        }
+    });
+}
+
+module.exports = [testBookRouteRejectsTraversal, testConcurrentSecretKeyCreation, testConcurrentStoreMutations, testAtomicConfigSave,
     testSessionLifetimeAndMalformedCookies, testProfileCredentialChangesRevokeSessions,
     testDownloaderClosesFailedTransfers, testDownloaderVerifiesTlsCertificates];
