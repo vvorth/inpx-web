@@ -2,7 +2,8 @@ import 'quasar/dist/quasar.css';
 import {
     Quasar, QLinearProgress, QInput, QBtn, QBtnToggle, QIcon, QTabs, QTab,
     QItem, QItemSection, QItemLabel, QTooltip, QCheckbox, QToggle, QSelect, QPopupProxy,
-    QDate, QDialog, QTree, QOptionGroup, QKnob, Ripple, ClosePopup, Dark, Notify,
+    QDate, QDialog, QTree, QOptionGroup, QKnob, QCard, QCardSection, QCardActions,
+    QChip, QSpace, QSpinner, Ripple, ClosePopup, Dark, Notify,
 } from 'quasar';
 import lang from 'quasar/lang/ru';
 import '@quasar/extras/line-awesome/line-awesome.css';
@@ -12,6 +13,7 @@ const components = {
     QLinearProgress, QInput, QBtn, QBtnToggle, QIcon, QTabs, QTab,
     QItem, QItemSection, QItemLabel, QTooltip, QCheckbox, QToggle, QSelect,
     QPopupProxy, QDate, QDialog, QTree, QOptionGroup, QKnob,
+    QCard, QCardSection, QCardActions, QChip, QSpace, QSpinner,
 };
 
 export default {
