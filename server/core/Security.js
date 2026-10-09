@@ -474,8 +474,8 @@ class Security {
     }
 
     loginAttemptKey(req, kind) {
-        const ip = this.clientIp(req) || 'unknown';
-        return kind === 'opds' ? `opds:${ip}` : ip;
+        // One counter per kind: a success of one kind must not clear the failures of another.
+        return `${this.normalizeLoginKind(kind)}:${this.clientIp(req) || 'unknown'}`;
     }
 
     incrementLoginMetric(kind = 'access', result = 'failure') {
@@ -524,8 +524,9 @@ class Security {
             return;
 
         if (success) {
-            // A known account must not erase failures against other OPDS profiles.
-            if (kind !== 'opds')
+            // Only the shared access password is one secret. Logging in to a known profile must
+            // not erase failures against other profiles (the admin's among them).
+            if (this.normalizeLoginKind(kind) === 'access')
                 this.loginAttempts.delete(ip);
             return;
         }

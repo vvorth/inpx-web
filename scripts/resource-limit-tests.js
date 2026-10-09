@@ -149,5 +149,20 @@ async function testConversionPublishesOnlyCompletedFiles() {
     } finally { await fs.remove(dir); }
 }
 
+// A valid access token rides on every WebSocket message, and a user may log in to their own
+// profile between guesses: neither may reset the failures against another profile.
+async function testProfileLoginRateLimitSurvivesOtherSuccesses() {
+    const security = new Security({loginRateLimitMaxAttempts: 3});
+    const req = {headers: {}, socket: {remoteAddress: '10.0.0.5'}};
+    for (let i = 0; i < 3; i++) {
+        security.checkLoginRate(req, 'profile');
+        security.recordLoginAttempt(req, false, 'profile');
+        security.recordLoginAttempt(req, true, 'access');
+        security.recordLoginAttempt(req, true, 'profile');
+    }
+    assert.throws(() => security.checkLoginRate(req, 'profile'), error => error.code === 'INPX_LOGIN_RATE_LIMIT');
+    assert.doesNotThrow(() => security.checkLoginRate(req, 'access'));
+}
+
 module.exports = [testConversionQueueLimitsAndRecovery, testConverterProcessTimeoutAndBoundedErrors,
-    testOpdsAuthenticationRateLimit, testConversionPublishesOnlyCompletedFiles];
+    testOpdsAuthenticationRateLimit, testProfileLoginRateLimitSurvivesOtherSuccesses, testConversionPublishesOnlyCompletedFiles];
