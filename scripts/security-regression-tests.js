@@ -284,6 +284,19 @@ async function testStoreLoadCacheStaysCurrent() {
     });
 }
 
-module.exports = [testBookRouteRejectsTraversal, testStoreLoadCacheStaysCurrent, testStoreReadErrorKeepsData, testAdminGetsRandomPasswordByDefault, testConcurrentSecretKeyCreation, testConcurrentStoreMutations, testAtomicConfigSave,
+// Author bios and FB2 annotations come from library files and are shown with v-html.
+async function testLibraryHtmlIsCleaned() {
+    const {safeHtml} = require('../shared/safeHtml');
+    assert.strictEqual(safeHtml('<P align="justify">Bio <b>bold</b><br/>&nbsp;&#171;q&#187;</P>'),
+        '<p>Bio <b>bold</b><br>&nbsp;&#171;q&#187;</p>');
+    assert.strictEqual(safeHtml('<subtitle>Part 1</subtitle>'), 'Part 1', 'Unknown tags are dropped, text stays');
+    assert.strictEqual(safeHtml('&lt;b&gt; and a < b'), '&lt;b&gt; and a &lt; b', 'Escaped text stays text');
+    for (const hostile of ['<img src=x onerror=alert(1)>', '<svg/onload=alert(1)>', '<p onclick="alert(1)">x</p>',
+        '<a href="javascript:alert(1)">x</a>', '<b\nonmouseover=alert(1)>x</b>', '<scr<script>ipt>alert(1)</script>',
+        '<p title="a>b" onmouseover="alert(1)">x</p>', '<iframe srcdoc="<script>alert(1)</script>">'])
+        assert.ok(!/<(?!\/?(p|br|b|i|u|em|strong|h[1-6]|sub|sup|ul|ol|li|blockquote|div|span)>)/i.test(safeHtml(hostile)), hostile);
+}
+
+module.exports = [testBookRouteRejectsTraversal, testLibraryHtmlIsCleaned, testStoreLoadCacheStaysCurrent, testStoreReadErrorKeepsData, testAdminGetsRandomPasswordByDefault, testConcurrentSecretKeyCreation, testConcurrentStoreMutations, testAtomicConfigSave,
     testSessionLifetimeAndMalformedCookies, testProfileCredentialChangesRevokeSessions,
     testDownloaderClosesFailedTransfers, testDownloaderVerifiesTlsCertificates];
