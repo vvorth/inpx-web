@@ -256,6 +256,22 @@ async function testAdminGetsRandomPasswordByDefault() {
     });
 }
 
-module.exports = [testBookRouteRejectsTraversal, testAdminGetsRandomPasswordByDefault, testConcurrentSecretKeyCreation, testConcurrentStoreMutations, testAtomicConfigSave,
+async function testStoreReadErrorKeepsData() {
+    await temporary(async(dataDir) => {
+        const store = new ReadingListStore({dataDir, adminPassword: 'fixture'});
+        await store.createList('default', 'Keep me');
+        const before = await fs.readFile(store.file, 'utf8');
+        const readFile = fs.readFile;
+        fs.readFile = async() => { throw Object.assign(new Error('EMFILE: too many open files'), {code: 'EMFILE'}); };
+        try {
+            await assert.rejects(store.load(), /EMFILE/);
+        } finally {
+            fs.readFile = readFile;
+        }
+        assert.strictEqual(await fs.readFile(store.file, 'utf8'), before, 'A read error must not reset the store');
+    });
+}
+
+module.exports = [testBookRouteRejectsTraversal, testStoreReadErrorKeepsData, testAdminGetsRandomPasswordByDefault, testConcurrentSecretKeyCreation, testConcurrentStoreMutations, testAtomicConfigSave,
     testSessionLifetimeAndMalformedCookies, testProfileCredentialChangesRevokeSessions,
     testDownloaderClosesFailedTransfers, testDownloaderVerifiesTlsCertificates];

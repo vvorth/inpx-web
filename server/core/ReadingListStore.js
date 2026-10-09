@@ -763,8 +763,10 @@ class ReadingListStore {
     async load() {
         await this.ensureData();
         let raw = null;
+        // A read error (EMFILE, EACCES, EIO) is not a broken file: let it fail this request
+        // instead of replacing every profile with an empty store.
+        const text = await fs.readFile(this.file, 'utf8');
         try {
-            const text = await fs.readFile(this.file, 'utf8');
             const normalized = String(text || '').trim();
             if (!normalized)
                 throw new Error('reading-lists.json is empty');
