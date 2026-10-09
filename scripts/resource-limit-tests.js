@@ -164,5 +164,15 @@ async function testProfileLoginRateLimitSurvivesOtherSuccesses() {
     assert.doesNotThrow(() => security.checkLoginRate(req, 'access'));
 }
 
-module.exports = [testConversionQueueLimitsAndRecovery, testConverterProcessTimeoutAndBoundedErrors,
+// Behind nginx with $proxy_add_x_forwarded_for the client controls the first entries.
+async function testClientIpIgnoresSpoofedForwardedFor() {
+    const security = new Security({trustProxy: true, trustedProxyCidrs: ['172.18.0.0/16']});
+    const viaProxy = header => ({headers: {'x-forwarded-for': header}, socket: {remoteAddress: '172.18.0.2'}});
+    assert.strictEqual(security.clientIp(viaProxy('1.2.3.4, 203.0.113.9')), '203.0.113.9');
+    assert.strictEqual(security.clientIp(viaProxy('1.2.3.4, 203.0.113.9, 172.18.0.7')), '203.0.113.9');
+    assert.strictEqual(security.clientIp(viaProxy('203.0.113.9')), '203.0.113.9');
+    assert.strictEqual(security.clientIp({headers: {'x-forwarded-for': '1.2.3.4'}, socket: {remoteAddress: '198.51.100.1'}}), '198.51.100.1');
+}
+
+module.exports = [testClientIpIgnoresSpoofedForwardedFor, testConversionQueueLimitsAndRecovery, testConverterProcessTimeoutAndBoundedErrors,
     testOpdsAuthenticationRateLimit, testProfileLoginRateLimitSurvivesOtherSuccesses, testConversionPublishesOnlyCompletedFiles];

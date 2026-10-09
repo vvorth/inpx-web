@@ -463,9 +463,13 @@ class Security {
     }
 
     clientIp(req) {
-        return this.forwardedHeader(req, 'x-forwarded-for')
-            || (req.socket && req.socket.remoteAddress)
-            || '';
+        // Proxies append the address they saw ($proxy_add_x_forwarded_for), so the first entries
+        // are whatever the client sent. Take the rightmost one that is not a trusted proxy.
+        const chain = (this.isTrustedProxy(req) ? String(req.headers['x-forwarded-for'] || '') : '')
+            .split(',').map(item => item.trim()).filter(Boolean);
+        while (chain.length > 1 && this.isTrustedProxyAddress(chain[chain.length - 1]))
+            chain.pop();
+        return chain.pop() || (req.socket && req.socket.remoteAddress) || '';
     }
 
     normalizeLoginKind(kind = 'access') {
